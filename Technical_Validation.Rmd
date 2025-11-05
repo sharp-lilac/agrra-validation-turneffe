@@ -151,9 +151,11 @@ ggsave("fig_rarefaction.png", fig_rarefaction, width = 14, height = 8, dpi = 300
 
 ## Differential Use of Benthic Codes
 
-Overall, we can see the percent of our data that has a listed Collector. We can also filter our data so only data with a Collector is being used for the bias checks. 
+Overall, we can see the percent of our data that has a listed Collector. 
+We can also filter our data so only data with a Collector is being used for the bias checks. 
 
 ```{r collectoroverallpercent1_benthicpim, fig.height=2.5, fig.width=10}
+# Calculate percentage ---------------------------------------------------------------
 missing_percentage <- 100 *
   sum(master_data$Collector == "MISSING") / nrow(master_data)
 cat("Data with a Collector:", sprintf("%.2f%%", 100 - missing_percentage))
@@ -161,25 +163,24 @@ collector_data <- filter(master_data, Collector != "MISSING") %>%
   mutate(Organism = ifelse(Organism == "TA_TAM", "TA", Organism))
 ```
 
-Next we can look at the contributions of each Collector towards the total collected data, colored by AGRRA vs MBRS protocol. Collectors above the line contribute to more than 3% of the data.
+Next we can look at the contributions of each Collector towards the total collected data, colored by AGRRA vs MBRS protocol. 
+Collectors above the line contribute to more than 3% of the data.
 
 ```{r collectoroverallpercent2_benthicpim, fig.height=3, fig.width=10}
+# Visualize collector contributions ---------------------------------------------------------------
 summary_data <- collector_data %>%
-  group_by(Collector, Protocol) %>%
-  summarise(Percentage = n() / nrow(collector_data) * 100) %>%
-  arrange(Protocol, Percentage)
-summary_data[3, 1] <- "NIMA (AGRRA)"
-summary_data[4, 1] <- "KENO (AGRRA)"
-summary_data[15, 1] <- "NIMA (MBRS)"
-summary_data[9, 1] <- "KENO (MBRS)"
-
-
-collector_order <- summary_data$Collector
-
-ggplot(summary_data, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
-  geom_hline(yintercept = c(5, 10, 15, 20), linetype = "dashed", color = "darkgrey", size = 0.75) +
-  geom_hline(yintercept = c(2.5, 7.5, 12.5, 17.5), linetype = "dotted", color = "darkgrey", size = 0.5) +
-  geom_col(width = 1, color = "black") +
+  group_by(Protocol, Collector) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  group_by(Protocol) %>%
+  mutate(Percentage = Count / sum(Count) * 100) %>%
+  ungroup()
+collector_order <- summary_data %>%
+  group_by(Collector) %>%
+  summarise(Total = sum(Count)) %>%
+  arrange(desc(Total)) %>%
+  pull(Collector)
+fig_contributions <- ggplot(summary_data, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
+  geom_col(width = 0.6, color = "black", position = "dodge") +
   theme_classic() +
   labs(x = "Collector", y = "Percent of Data") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
@@ -187,10 +188,10 @@ ggplot(summary_data, aes(x = factor(Collector, levels = collector_order), y = Pe
     name = "Protocol",
     values = c("AGRRA" = "#56B4E9", "MBRS" = "#E69F00")
   ) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 3),
-    fill = "grey", alpha = 0.05, inherit.aes = FALSE
-  ) +
-  geom_hline(yintercept = 3, linetype = "solid", color = "black", size = 0.5)
+  theme_pubclean() +
+  scale_y_continuous(breaks = seq(0, 40, by = 5)) +
+  geom_hline(yintercept = 3, linetype = "dashed", color = "black", size = 0.5)
+ggsave("fig_contributions.png", fig_contributions, width = 8, height = 5, dpi = 300)
 ```
 
 ### Protocol Bias
