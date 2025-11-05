@@ -32,7 +32,6 @@ library(ggpubr) # ggarrange
 library(dunn.test) # Dunn
 library(purrr) # mapdfr
 library(knitr) # Markdown
-library(vegan) # Rarefaction
 library(factoextra) # PCA biplots
 library(glmmTMB) # GLMM
 library(car) # Anova
@@ -128,6 +127,9 @@ post_transition <- inext_all_gg %>%
   filter(x >= transition_points$x[match(Assemblage, transition_points$Assemblage)]) %>%
   ungroup()
 
+# Calculate total observations ---------------------------------------------------------------
+sum(data_species_counts$count)
+
 # Create rarefaction curve ---------------------------------------------------------------
 fig_rarefaction <- ggplot() +
   geom_line(data = pre_transition, aes(x = x, y = y, group = Assemblage), color = "black") +
@@ -139,14 +141,12 @@ fig_rarefaction <- ggplot() +
     aes(x = x, y = y, label = Assemblage),
     show.legend = FALSE, color = "black"
   ) +
-  scale_color_manual(values = palette) +
-  scale_fill_manual(values = palette) +
   labs(x = "Number of Observations", y = "Species Richness") +
   theme_pubclean() +
   facet_wrap(~Type, nrow = 1) +
   scale_x_continuous(breaks = seq(0, 3000, by = 500)) +
   scale_y_continuous(breaks = seq(0, 60, by = 5))
-# ggsave("fig_rarefaction.jpg", fig_rarefaction, width = 12, height = 8)
+ggsave("fig_rarefaction.png", fig_rarefaction, width = 14, height = 8, dpi = 300)
 ```
 
 ## Differential Use of Benthic Codes
