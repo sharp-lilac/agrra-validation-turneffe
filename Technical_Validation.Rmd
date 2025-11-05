@@ -37,11 +37,21 @@ library(factoextra) # PCA biplots
 library(glmmTMB) # GLMM
 library(car) # Anova
 library(kableExtra) # Customize tables
+library(iNEXT) # Rarefaction
 
-# Define palette ---------------------------------------------------------------
+# Define theme ---------------------------------------------------------------
 palette <- c(
   "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#CC79A7", "#9999FF", "#33A02C", "#FB9A99",
   "#990066", "#9933FF", "#999933", "#FFCCFF", "#336600", "#999999", "#990000"
+)
+xy <- theme(
+  legend.position = "top", axis.text.x = element_text(
+    angle = 0, face = "bold", size = 12,
+    vjust = 0.5, hjust = 1
+  ),
+  legend.text = element_text(size = 12),
+  legend.title = element_text(size = 14),
+  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
 )
 
 # Download and load data ---------------------------------------------------------------
@@ -67,83 +77,76 @@ sites_data <- dfs$Ref_Sites_Turneffe
 
 ## Rare Species Exclusion
 
-We can create a rarefraction curve of total coral species expected to be found by number of samples. Each sampled site is plotted as a line, with localities being labelled, and reef types being indicated by color (yellow being backreef, blue being deep forereef, and green being shallow forereef). 
+We can create a rarefaction curve of total coral species expected to be found by number of samples. 
+Each sampled site is plotted as a line, with localities being labelled, and reef types being indicated by color 
+(yellow being backreef, blue being deep forereef, and green being shallow forereef). 
 
 ```{r rarespecies_benthicpim, fig.height=7, fig.width=12}
 # Filter data ---------------------------------------------------------------
 master_data_species <- master_data %>%
   inner_join(x = master_data, y = organism_data, by = "Organism") %>%
   filter(!is.na(Species)) %>%
-  filter(Species != "")
-
-# Format data for vegan ---------------------------------------------------------------
-data_vegan_overall <- master_data_species %>%
-  group_by(Site, Species) %>%
-  summarise(Count = n()) %>%
-  select(Site, Species, Count) %>%
-  pivot_wider(names_from = Species, values_from = Count, values_fill = 0)
-rownames_overall_vegan <- data_vegan_overall$Site
-data_vegan_overall <- data_vegan_overall[, -1]
-rownames(data_vegan_overall) <- rownames_overall_vegan
-metadata <- master_data_species %>%
-  group_by(Site, Protocol)
-
-# Fetch data for curve
-C <- rarecurve(data_vegan_overall, step = 50, tidy = TRUE)
-
-# Fetch data on reef types on localities based on site and add to curve data
-reef_typesC <- C %>%
-  distinct(Site) %>%
+  filter(Species != "") %>%
   mutate(Type = case_when(
     grepl("BR$", Site) ~ "BR",
     grepl("DFR$", Site) ~ "DFR",
     TRUE ~ "SFR"
   )) %>%
   mutate(Locality = gsub("BR$|DFR$|SFR$", "", Site))
-C <- left_join(C, reef_typesC, by = "Site")
+site_type_lookup <- master_data_species %>%
+  distinct(Site, Type)
 
-# Determine where each rarecurve line will end, so labels can be placed properly
-last_pointsC <- C %>%
-  group_by(Site) %>%
-  slice_tail(n = 1)
+# Prepare data for rarefaction ---------------------------------------------------------------
+data_species_counts <- master_data_species %>%
+  filter(!is.na(Species)) %>%
+  group_by(Site, Species) %>%
+  summarise(count = n(), .groups = "drop")
+abundance_list <- data_species_counts %>%
+  group_split(Site) %>%
+  setNames(unique(data_species_counts$Site)) %>%
+  lapply(function(x) x$count)
+inext_all <- iNEXT(abundance_list, q = 0, datatype = "abundance")
+inext_all_gg <- fortify(inext_all, type = 1)
+inext_all_gg <- inext_all_gg %>%
+  left_join(site_type_lookup, by = c("Assemblage" = "Site"))
+transition_points <- inext_all_gg %>%
+  filter(Method == "Extrapolation") %>%
+  group_by(Assemblage) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+end_points <- inext_all_gg %>%
+  filter(Method == "Extrapolation") %>%
+  group_by(Assemblage) %>%
+  slice_tail(n = 1) %>%
+  ungroup()
+pre_transition <- inext_all_gg %>%
+  group_by(Assemblage) %>%
+  filter(x <= transition_points$x[match(Assemblage, transition_points$Assemblage)]) %>%
+  ungroup()
+post_transition <- inext_all_gg %>%
+  group_by(Assemblage) %>%
+  filter(x >= transition_points$x[match(Assemblage, transition_points$Assemblage)]) %>%
+  ungroup()
 
-# Create plot theme for rarecurve
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 0, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-h_line1 <- geom_hline(yintercept = c(10, 20, 30, 40), linetype = "dashed", color = "darkgrey", size = 0.75)
-h_line2 <- geom_hline(yintercept = c(5, 15, 25, 35, 45), linetype = "dotted", color = "darkgrey", size = 0.5)
-v_line1 <- geom_vline(xintercept = seq(0, 1500, by = 250), linetype = "dotted", color = "darkgrey", size = 0.5)
-
-RareC <- ggplot(C, aes(x = Sample, y = Species, group = Site, color = Type)) +
-  h_line1 +
-  h_line2 +
-  v_line1 +
-  geom_line(size = 0.8) +
-  theme_classic() +
-  scale_color_manual(
-    name = "Reef Type",
-    values = palette[1:3]
-  ) +
-  coord_cartesian(ylim = c(0, 45)) +
+# Create rarefaction curve ---------------------------------------------------------------
+fig_rarefaction <- ggplot() +
+  geom_line(data = pre_transition, aes(x = x, y = y, group = Assemblage), color = "black") +
+  geom_line(data = post_transition, aes(x = x, y = y, group = Assemblage), color = "black", linetype = "dashed") +
+  geom_ribbon(data = inext_all_gg, aes(x = x, y = y, ymin = y.lwr, ymax = y.upr, group = Assemblage), alpha = 0.1, color = NA, fill = "grey") +
+  geom_point(data = transition_points, aes(x = x, y = y), shape = 8, size = 5, color = "black") +
   geom_label_repel(
-    data = last_pointsC, aes(label = Locality, x = Sample, y = Species),
-    label.padding = unit(0.1, "lines"), fill = "white", color = "black",
-    box.padding = unit(0.4, "lines"),
-    segment.size = 0.7,
-    force = 20, size = 6
+    data = end_points, min.segment.length = 0,
+    aes(x = x, y = y, label = Assemblage),
+    show.legend = FALSE, color = "black"
   ) +
-  xy +
-  scale_x_continuous(breaks = seq(0, 1500, by = 250))
-
-# ggsave("fig2_rarefactions.png", plot = RareC, width = 14, height = 8, units = "in", dpi = 800)
-RareC
+  scale_color_manual(values = palette) +
+  scale_fill_manual(values = palette) +
+  labs(x = "Number of Observations", y = "Species Richness") +
+  theme_pubclean() +
+  facet_wrap(~Type, nrow = 1) +
+  scale_x_continuous(breaks = seq(0, 3000, by = 500)) +
+  scale_y_continuous(breaks = seq(0, 60, by = 5))
+# ggsave("fig_rarefaction.jpg", fig_rarefaction, width = 12, height = 8)
 ```
 
 ## Differential Use of Benthic Codes
