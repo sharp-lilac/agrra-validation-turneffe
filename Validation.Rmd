@@ -1,0 +1,2084 @@
+---
+title: "Data Validation"
+output: 
+  html_document:
+    fig_height: 6
+    fig_width: 8
+    collapse: no
+    code_folding: hide
+    theme: sandstone
+    toc: true
+    toc_depth: 4
+    toc_float: yes
+    df_print: paged
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+**Goal**
+
+Validate the UB-ERI MBRS and AGRRA data for Turneffe Atoll, Belize, coral reef monitoring surveys from 2010-2018, 2021, 2023, and 2025 by creating specific validation rules for each column and flagging cells that do not comply. 
+
+
+```{r start, message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyverse)
+library(knitr)
+
+```
+
+# Reef Fish Surveys
+
+First, we will validate the reef fish surveys. We have data from 2010-2015, 2017-2018, 2021, 2023, and 2025. The data spans 2 distinct protocols, with MBRS from 2010-2015 and 2017-2018, and AGRRA for 2021, 2023, and 2025.
+
+```{r start2, message=FALSE, warning=FALSE, results='hide'}
+
+master_data = read.csv("Master_Fish_Survey_2010-2025.csv", na.strings = c("NA")) #load master data
+fish_data = read.csv("Ref_Fish_Species.csv", na.strings = c("NA")) #load fish data
+collector_data = read.csv("Ref_Collectors_Turneffe.csv", na.strings = c("NA")) #load collector data
+sites_data = read.csv("Ref_Sites_Turneffe.csv", na.strings = c("NA")) #load sites data
+
+```
+
+## Validation Rules {.tabset .tabset-fade .tabset-pills}
+
+Scroll through the tabs to view validation rules, associated code, and results of the validation for each parameter in the fish dataset.
+
+### Year
+
+Must be valid year (2010-2015, 2017, 2021, 2023, or 2025).
+
+```{r year.f, class.source = 'fold-show'}
+validate_year = function(x) {
+  valid_years = c(2010, 2011, 2012, 2013, 2014, 2015, 2017, 2018, 2021, 2023, 2025)
+  valid = !is.na(x) & x %in% valid_years
+  if (all(valid)) {
+    cat("Year is validated!\n")
+  } else {
+    cat("Error: These Years are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_year(master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Date
+
+Must be either MISSING or a date in the format YYYY-MM-DD with the same year as Year. No NAs.
+
+```{r date.f, class.source = 'fold-show'}
+validate_date = function(x, y) {
+  valid_date_format = grepl("^\\d{4}-\\d{2}-\\d{2}$", x)
+  valid_year = substr(x, 1, 4) == as.character(y)
+  # Extract the year, month, and day from the Date column
+  date_parts = strsplit(x, "-")
+  # Check if the month and day are valid
+  valid_month = as.integer(sapply(date_parts, function(x) x[2])) %in% 1:12 #max 12 months
+  valid_day = as.integer(sapply(date_parts, function(x) x[3])) %in% 1:31  #max 31 days
+  # Combine all the conditions to validate
+  valid = (x == "MISSING" | (valid_date_format & valid_year & valid_month & valid_day))
+  if (all(valid)) {
+    cat("Date is validated!\n")
+  } else {
+    cat("Error: These Dates are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_date(master_data$Date, master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Locality
+
+Must be from list of valid localities in sites_data, must not be NA or MISSING.
+
+```{r locality.f, class.source = 'fold-show'}
+validate_locality = function(x) {
+  valid_localities = sites_data$Locality
+  valid = !is.na(x) & x %in% valid_localities & x != "MISSING"
+  if (all(valid)) {
+    cat("Locality is validated!\n")
+  } else {
+    cat("Error: These Localities are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_locality(master_data$Locality)
+
+```
+
+------------------------------------------------------------------------
+
+### Site
+
+Must be from list of valid sites in sites_data, must not be NA or MISSING.
+
+```{r site.f, class.source = 'fold-show'}
+validate_site = function(x) {
+  valid_sites = sites_data$Site
+  valid = !is.na(x) & x %in% valid_sites & x != "MISSING"
+  if (all(valid)) {
+    cat("Site is validated!\n")
+  } else {
+    cat("Error: These Sites are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_site(master_data$Site)
+
+```
+
+------------------------------------------------------------------------
+
+### Transect
+
+Must be 1-12. Allowed to be MISSING.
+
+```{r transect.f, class.source = 'fold-show'}
+validate_transect = function(x, y) {
+  valid = (!is.na(x) & x %in% 1:12) | x == "MISSING"
+  if (all(valid)) {
+    cat("Transect is validated!\n")
+  } else {
+    cat("Error: These Transects are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_transect(master_data$Transect)
+```
+
+------------------------------------------------------------------------
+
+### Protocol
+
+Protocol must be "MBRS" for Year from 2010-2018, and "AGRRA" for Year 2021-2025.
+
+```{r protocol.f, class.source = 'fold-show'}
+validate_protocol = function(protocol_column, year_column) {
+  valid_mbrs = year_column >= 2010 & year_column <= 2018 & protocol_column == "MBRS"
+  valid_agrra = year_column >= 2021 & year_column <= 2025 & protocol_column == "AGRRA"
+  valid = valid_mbrs | valid_agrra
+  if (all(valid)) {
+    cat("Protocol is validated!\n")
+  } else {
+    cat("Error: These Protocol values are invalid:\n")
+    cat(protocol_column[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_protocol(master_data$Protocol, master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Start_Time
+
+Format must be in HH:MM (24hr 'Army' time), or MISSING. No NAs.
+
+```{r time.f, class.source = 'fold-show'}
+validate_time = function(x) {
+  valid = rep(FALSE, length(x))
+  for (i in 1:length(x)) {
+    if (x[i] == "MISSING") {
+      valid[i] = TRUE
+    } else {
+      time_parts = strsplit(x[i], ":")[[1]]
+      if (length(time_parts) == 2) {
+        valid_hour = as.numeric(time_parts[1]) >= 0 & as.numeric(time_parts[1]) <= 23
+        valid_minute = as.numeric(time_parts[2]) >= 0 & as.numeric(time_parts[2]) <= 59
+        valid[i] = valid_hour & valid_minute
+      }
+    }
+  }
+  if (all(valid)) {
+    cat("Start_Time is validated!\n")
+  } else {
+    cat("Error: These Start_Time values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_time(master_data$Start_Time)
+```
+
+------------------------------------------------------------------------
+
+### Start_Depth, End_Depth
+
+Must be either MISSING or an integer from 1-60. No NAs.
+
+```{r depth.f, class.source = 'fold-show'}
+validate_depth = function(x, column_name) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 1:60))
+  if (all(valid)) {
+    cat(paste(column_name, "is validated!\n"))
+  } else {
+    cat("Error: These", column_name, "values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_depth(master_data$Start_Depth, "Start_Depth"))
+suppressWarnings(validate_depth(master_data$End_Depth, "End_Depth"))
+```
+
+------------------------------------------------------------------------
+
+### Max_Relief
+
+Should be a series of integers separated by ".". Should be to the nearest 5. For example, 5.0.10 would be valid. Note: if seeing NA coercion error, there is a non-"MISSING" string that needs to be removed (for example, maybe a relief is called 'Bumpy' instead of being integers or MISSING).
+
+```{r max_relief.f, class.source = 'fold-show'}
+validate_max_relief <- function(x) {
+  relief_values <- unlist(strsplit(as.character(x), "\\."))
+  valid <- sapply(relief_values, function(val) {
+    if (val == "MISSING") {
+      TRUE
+    } else {
+      num <- suppressWarnings(as.numeric(val))
+      !is.na(num) && (num %% 5 == 0 || num == 0)
+    }
+  })
+  if (all(valid)) {
+    cat("Max_Relief is validated!\n")
+  } else {
+    cat("Error: These Max_Relief values are invalid:\n")
+    cat(relief_values[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_max_relief(filter(master_data, Max_Relief != "MISSING")$Max_Relief)
+
+```
+
+------------------------------------------------------------------------
+
+### Temp
+
+Must be either MISSING or an integer from 20-35. No NAs.
+
+```{r temp, class.source = 'fold-show'}
+validate_temp = function(x) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 20:35))
+  if (all(valid)) {
+    cat("Temp is validated!\n")
+  } else {
+    cat("Error: These Temp values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_temp(master_data$Temp))
+```
+
+------------------------------------------------------------------------
+
+### Fish
+
+Must be a Fish that was surveyed in that specific Year. Whether a Fish was surveyed that Year is determined by whether the column named after that Year in fish_data has Yes (surveyed) or No (not surveyed). Fish can be NA if no fish found in that transect.
+
+```{r fish.f, class.source = 'fold-show'}
+validate_fish_by_year = function(master_data, fish_data) {
+  valid_years = c(2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2021, 2023, 2025)
+  for (year in valid_years) {
+    year_column_name = paste0("List_", year)
+    # Extract the fish column for the current year from fish_data
+    valid_fish = fish_data$Fish[fish_data[[year_column_name]] == "Yes"]
+    # Identify rows in master_data for the current year
+    year_rows = master_data$Year == year
+    # Validate fish in master_data for the current year
+    valid = !is.na(master_data$Fish[year_rows]) & 
+      master_data$Fish[year_rows] %in% valid_fish
+    if (!all(valid)) {
+      cat("Error: These Fish are invalid for Year", year, ":\n")
+      cat(master_data$Fish[year_rows & !valid], sep = ", ", "\n")
+      return(FALSE)
+    }
+  }
+  cat("Fish are validated for all years!\n")
+  return(TRUE)
+}
+suppressWarnings(validate_fish_by_year(filter(master_data, !is.na(Fish)), fish_data))
+
+```
+
+------------------------------------------------------------------------
+
+### Fish_Scientific
+
+Must be a Fish_Scientific that was surveyed in that specific Year. Whether a Fish_Scientific was surveyed that Year is determined by whether the column named after that Year in fish_data has Yes (surveyed) or No (not surveyed).
+
+```{r fish_scientific.f, class.source = 'fold-show'}
+validate_fish_scientific_by_year = function(master_data, fish_data) {
+  valid_years = c(2010, 2011, 2012, 2013, 2014, 2015, 2017, 2018, 2021, 2023, 2025)
+  for (year in valid_years) {
+    year_column_name = paste0("List_", year)
+    # Extract the Fish_Scientific column for the current year from fish_data
+    valid_fish_scientific = 
+      fish_data$Fish_Scientific[fish_data[[year_column_name]] == "Yes"]
+    # Identify rows in master_data for the current year
+    year_rows = master_data$Year == year
+    # Validate Fish_Scientific in master_data for the current year
+    valid = !is.na(master_data$Fish_Scientific[year_rows]) & master_data$Fish_Scientific[year_rows] %in% valid_fish_scientific
+    if (!all(valid)) {
+      cat("Error: These Fish_Scientific names are invalid for Year", 
+          year, ":\n")
+      cat(master_data$Fish_Scientific[year_rows & !valid], sep = ", ", "\n")
+      return(FALSE)
+    }
+  }
+  cat("Fish_Scientific names are validated for all years!\n")
+  return(TRUE)
+}
+suppressWarnings(validate_fish_scientific_by_year(filter(master_data, !is.na(Fish)), fish_data))
+
+
+```
+
+------------------------------------------------------------------------
+
+### Fish / Fish_Scientific Cross-Check
+
+Each Fish in a row must have the correct corresponding Fish_Scientific as in the fish_data reference file
+
+```{r fish_cross.f, class.source = 'fold-show'}
+validate_fish_crosscheck = function(fish_column, fish_scientific_column) {
+  valid = sapply(1:length(fish_column), function(i) {
+    fish = fish_column[i]
+    fish_scientific = fish_scientific_column[i]
+    # Handle missing values
+    if (is.na(fish) || is.na(fish_scientific)) {
+      return(FALSE)
+    }
+    # Get the corresponding Fish_Scientific for the Fish in the same row
+    correct_scientific = fish_data$Fish_Scientific[fish_data$Fish == fish]
+    # Check if the Fish_Scientific in master_data matches the correct one
+    return(identical(fish_scientific, correct_scientific))
+  })
+  invalid_rows = which(!valid)
+  if (length(invalid_rows) == 0) {
+    cat("Fish / Fish_Scientific cross-check was successful!\n")
+  } else {
+    cat("Error: Fish / Fish_Scientific cross-check failed for these rows:\n")
+    cat(paste("Row ", invalid_rows, ": ", master_data[invalid_rows, c("Fish", "Fish_Scientific")], "\n", sep = ""))
+  }
+  return(all(valid))
+}
+validate_fish_crosscheck(
+  filter(master_data, !is.na(Fish))$Fish, 
+  filter(master_data, !is.na(Fish))$Fish_Scientific
+                )
+
+```
+
+------------------------------------------------------------------------
+
+### Size_Class
+
+Must be either 2.5, 7.5, 15.5, 25.5, 35.5, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150. Can be NA only if no fish found in transect.
+
+```{r size_class.f, class.source = 'fold-show'}
+validate_size_class <- function(x) {
+  allowed_formats <- c(2.5, 7.5, 15.5, 25.5, 35.5, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150)
+  valid <- !is.na(x) & x %in% allowed_formats
+  if (all(valid)) {
+    cat("Size_Class is validated!\n")
+  } else {
+    cat("Error: These Size_Class values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_size_class(filter(master_data, !is.na(Fish))$Size_Class)
+```
+
+------------------------------------------------------------------------
+
+### Observations
+
+Observations should be either an integer 0-500, or MISSING
+
+```{r observations.f, class.source = 'fold-show'}
+validate_obs = function(x) {
+  valid = (x %in% 0:500 | x == "MISSING") & !is.na(x)
+  if (all(valid)) {
+    cat("Observations are validated!\n")
+  } else {
+    cat("Error: These Observations values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_obs(master_data$Observations)
+```
+
+------------------------------------------------------------------------
+
+### Cloud_Cover
+
+Must be either MISSING or an integer from 1-8.
+
+```{r cloud_cover.f, class.source = 'fold-show'}
+validate_cloud = function(x) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 1:8))
+  if (all(valid)) {
+    cat("Cloud_Cover is validated!\n")
+  } else {
+    cat("Error: These Cloud_Cover values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_cloud(master_data$Cloud_Cover))
+```
+
+------------------------------------------------------------------------
+
+### Sea_Condition
+
+Must be either MISSING, "Calm", "Moderate", or "Choppy"
+
+```{r sea_condition.f, class.source = 'fold-show'}
+validate_sea_condition = function(x) {
+  allowed_conditions <- c("MISSING", "Calm", "Moderate", "Choppy")
+  valid <- !is.na(x) & x %in% allowed_conditions
+  if (all(valid)) {
+    cat("Sea_Condition is validated!\n")
+  } else {
+    cat("Error: These Sea_Condition values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_sea_condition(master_data$Sea_Condition)
+```
+
+------------------------------------------------------------------------
+
+### Collector
+
+Collector should be from Collector in collector_data, or MISSING. But not NA.
+
+```{r collector.f, class.source = 'fold-show'}
+validate_collector = function(x) {
+  valid_collectors = collector_data$Collector
+  valid = (!is.na(x) & x %in% valid_collectors) | x == "MISSING"
+  if (all(valid)) {
+    cat("Collector is validated!\n")
+  } else {
+    cat("Error: These Collector values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_collector(master_data$Collector)
+```
+
+------------------------------------------------------------------------
+
+### Notes
+
+No rules for Notes.
+
+```{r notes.f, class.source = 'fold-show'}
+validate_notes = function(x) {
+  cat("Notes is validated!\n")
+  return(TRUE)
+}
+validate_notes(master_data$Notes)
+```
+
+------------------------------------------------------------------------
+
+# Benthic PIM Surveys
+
+Next, we will validate the benthic point-intercept method (PIM) surveys. We have data from 2010-2018, 2021, 2023, and 2025. The data spans 2 distinct protocols, with MBRS from 2010-2018, and AGRRA for 2021-2025.
+
+```{r start.b, message=FALSE, warning=FALSE, results='hide'}
+
+#Setup. Load in necessary data.
+
+master_data = read.csv("Master_Benthic_PIM_2010-2025.csv", 
+                       na.strings = c("NA")) #load master data
+organism_data = read.csv("Ref_Organisms_Benthic.csv", 
+                     na.strings = c("NA")) #load organism data
+collector_data = read.csv("Ref_Collectors_Turneffe.csv", 
+                          na.strings = c("NA")) #load collector data
+sites_data = read.csv("Ref_Sites_Turneffe.csv", 
+                      na.strings = c("NA")) #load sites data
+
+```
+
+## Validation Rules {.tabset .tabset-fade .tabset-pills}
+
+Scroll through the tabs to view validation rules, associated code, and results of the validation for each parameter in the benthic PIM dataset.
+
+### Year
+
+Must be valid year (2010-2018, 2021 or 2023 or 2025).
+
+```{r year.b, class.source = 'fold-show'}
+validate_year = function(x) {
+  valid_years = c(2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2021, 2023, 2025)
+  valid = !is.na(x) & x %in% valid_years
+  if (all(valid)) {
+    cat("Year is validated!\n")
+  } else {
+    cat("Error: These Years are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_year(master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Date
+
+Must be either MISSING or a date in the format YYYY-MM-DD with the same year as Year. No NAs.
+
+```{r date.b, class.source = 'fold-show'}
+validate_date = function(x, y) {
+  valid_date_format = grepl("^\\d{4}-\\d{2}-\\d{2}$", x)
+  valid_year = substr(x, 1, 4) == as.character(y)
+  # Extract the year, month, and day from the Date column
+  date_parts = strsplit(x, "-")
+  # Check if the month and day are valid
+  valid_month = as.integer(sapply(date_parts, function(x) x[2])) %in% 1:12 #max 12 months
+  valid_day = as.integer(sapply(date_parts, function(x) x[3])) %in% 1:31  #max 31 days
+  # Combine all the conditions to validate
+  valid = (x == "MISSING" | (valid_date_format & valid_year & valid_month & valid_day))
+  if (all(valid)) {
+    cat("Date is validated!\n")
+  } else {
+    cat("Error: These Dates are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_date(master_data$Date, master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Locality
+
+Must be from list of valid localities in sites_data, must not be NA or MISSING.
+
+```{r locality.b, class.source = 'fold-show'}
+validate_locality = function(x) {
+  valid_localities = sites_data$Locality
+  valid = !is.na(x) & x %in% valid_localities & x != "MISSING"
+  if (all(valid)) {
+    cat("Locality is validated!\n")
+  } else {
+    cat("Error: These Localities are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_locality(master_data$Locality)
+
+```
+
+------------------------------------------------------------------------
+
+### Site
+
+Must be from list of valid sites in sites_data, must not be NA or MISSING.
+
+```{r site.b, class.source = 'fold-show'}
+validate_site = function(x) {
+  valid_sites = sites_data$Site
+  valid = !is.na(x) & x %in% valid_sites & x != "MISSING"
+  if (all(valid)) {
+    cat("Site is validated!\n")
+  } else {
+    cat("Error: These Sites are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_site(master_data$Site)
+
+```
+
+------------------------------------------------------------------------
+
+### Transect
+
+Must be 1-6. Allowed to be MISSING.
+
+```{r transect.b, class.source = 'fold-show'}
+validate_transect = function(x, y) {
+  valid = (!is.na(x) & x %in% 1:6) | x == "MISSING"
+  if (all(valid)) {
+    cat("Transect is validated!\n")
+  } else {
+    cat("Error: These Transects are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_transect(master_data$Transect)
+```
+
+------------------------------------------------------------------------
+
+
+### Protocol
+
+Protocol must be "MBRS" for Year from 2010-2018, and "AGRRA" for Year 2021-2025
+
+```{r protocol.b, class.source = 'fold-show'}
+validate_protocol = function(protocol_column, year_column) {
+  valid_mbrs <- year_column >= 2010 & year_column <= 2018 & protocol_column == "MBRS"
+  valid_agrra <- year_column >= 2021 & year_column <= 2025 & protocol_column == "AGRRA"
+  valid <- valid_mbrs | valid_agrra
+  if (all(valid)) {
+    cat("Protocol is validated!\n")
+  } else {
+    cat("Error: These Protocol values are invalid:\n")
+    cat(protocol_column[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_protocol(master_data$Protocol, master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Start_Time
+
+Format must be in HH:MM (24hr 'Army' time), or MISSING. No NAs.
+
+```{r time.b, class.source = 'fold-show'}
+validate_time = function(x) {
+  valid = rep(FALSE, length(x))
+  for (i in 1:length(x)) {
+    if (x[i] == "MISSING") {
+      valid[i] = TRUE
+    } else {
+      time_parts = strsplit(x[i], ":")[[1]]
+      if (length(time_parts) == 2) {
+        valid_hour = as.numeric(time_parts[1]) >= 0 & as.numeric(time_parts[1]) <= 23
+        valid_minute = as.numeric(time_parts[2]) >= 0 & as.numeric(time_parts[2]) <= 59
+        valid[i] = valid_hour & valid_minute
+      }
+    }
+  }
+  if (all(valid)) {
+    cat("Start_Time is validated!\n")
+  } else {
+    cat("Error: These Start_Time values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_time(master_data$Start_Time)
+```
+
+------------------------------------------------------------------------
+
+### Start_Depth, End_Depth
+
+Must be either MISSING or an integer from 1-60. No NAs.
+
+```{r depth.b, class.source = 'fold-show'}
+validate_depth = function(x, column_name) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 1:60))
+  if (all(valid)) {
+    cat(paste(column_name, "is validated!\n"))
+  } else {
+    cat("Error: These", column_name, "values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_depth(master_data$Start_Depth, "Start_Depth"))
+suppressWarnings(validate_depth(master_data$End_Depth, "End_Depth"))
+```
+
+------------------------------------------------------------------------
+
+### Temp
+
+Must be either MISSING or an integer from 20-35. No NAs.
+
+```{r temp.b, class.source = 'fold-show'}
+validate_temp = function(x) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 20:35))
+  if (all(valid)) {
+    cat("Temp is validated!\n")
+  } else {
+    cat("Error: These Temp values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_temp(master_data$Temp))
+```
+
+------------------------------------------------------------------------
+
+### Point
+
+Point must be a multiple of 0.25 for 2010-2018, multiple of 0.1 for 2021-2025. MISSING is allowed.
+
+```{r point.b, class.source = 'fold-show'}
+
+validate_point = function(x, y) {
+  if (all(y %in% 2010:2018) || all(y %in% 2019:2025)) {
+    if (all(y %in% 2010:2018)) {
+      valid_multiple <- !is.na(as.numeric(x)) & 
+        all(abs(as.numeric(x) %% 0.25) < 1e-10)
+    } else if (all(y %in% 2019:2025)) {
+      valid_multiple <- !is.na(as.numeric(x)) & 
+        all(abs(as.numeric(x) * 10 - round(as.numeric(x) * 10)) < 1e-10)
+    }
+    if (all(valid_multiple)) {
+      cat("Point is validated!\n")
+    } else {
+      cat("Error: These Point values are invalid:\n")
+      cat(x[!valid_multiple], sep = ", ")
+    }
+    return(all(valid_multiple))
+  } else {
+    stop("Error: Mixed years found in 'y'.")
+  }
+}
+master_dataAGRRA = filter(master_data, Point != "MISSING", Protocol == "AGRRA")
+master_dataMBRS = filter(master_data, Point != "MISSING", Protocol == "MBRS")
+validate_point(master_dataAGRRA$Point, master_dataAGRRA$Year)
+validate_point(master_dataMBRS$Point, master_dataMBRS$Year)
+
+```
+
+------------------------------------------------------------------------
+
+### Organism
+
+Must be a an Organism from organism_data, or NA (in Secondary).
+
+```{r organism.b, class.source = 'fold-show'}
+validate_organisms = function(x) {
+  valid_organisms = organism_data$Organism
+  valid = is.na(x) | x %in% valid_organisms
+  if (all(valid)) {
+    cat("Organisms are validated!\n")
+  } else {
+    cat("Error: These Organism values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_organisms(master_data$Organism)
+validate_organisms(master_data$Secondary)
+
+```
+
+
+------------------------------------------------------------------------
+
+### Algae_Height
+
+Algae_Height may be NA, MISSING, or an integer from 0-300
+
+```{r algae.b, class.source = 'fold-show'}
+validate_algae_height = function(x, organism_column) {
+  valid = is.na(x) | x == "MISSING" | as.integer(x) %in% c(0:300)
+  if (all(valid)) {
+    cat("Algae_Height is validated!\n")
+  } else {
+    cat("Invalid values found:\n")
+    cat(x[!valid], "\n")  }
+  return(all(valid))
+}
+validate_algae_height(master_data$Algae_Height)
+
+
+```
+
+------------------------------------------------------------------------
+
+### Bleaching
+
+
+Bleaching MUST BE NA, MISSING, P, BL, PB, or UB
+
+
+```{r bleach.b, class.source = 'fold-show'}
+
+validate_bleaching = function(x) {
+  allowed_formats = c("P", "BL", "PB", "UB", "MISSING")
+  valid = is.na(x) | x %in% allowed_formats
+  if (all(valid)) {
+    cat("Bleaching is validated!\n")
+  } else {
+    cat("Invalid values found:\n")
+    cat(x[!valid], "\n")  }
+  return(all(valid))
+}
+validate_bleaching(master_data$Bleaching)
+
+
+```
+
+------------------------------------------------------------------------
+
+### ND_A
+
+
+ND_A MUST BE NA, MISSING, ND, or A
+
+
+```{r nda.b, class.source = 'fold-show'}
+validate_nda = function(x, organism_column) {
+  allowed_formats = c("ND", "A")
+  valid = (is.na(x) | x == "MISSING" | x %in% allowed_formats)
+  if (all(valid)) {
+    cat("ND_A is validated!\n")
+  } else {
+    cat("Invalid values found:\n")
+    cat("ND_A:", x[!valid], "\n")
+  }
+  return(all(valid))
+}
+validate_nda(master_data$ND_A)
+
+```
+
+------------------------------------------------------------------------
+
+### Collector
+
+Collector should be from Collector in collector_data, or MISSING. But not NA.
+
+```{r collector.b, class.source = 'fold-show'}
+validate_collector = function(x) {
+  valid_collectors = collector_data$Collector
+  valid = (!is.na(x) & x %in% valid_collectors) | x == "MISSING"
+  if (all(valid)) {
+    cat("Collector is validated!\n")
+  } else {
+    cat("Error: These Collector values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_collector(master_data$Collector)
+```
+
+------------------------------------------------------------------------
+
+### Notes
+
+No rules for Notes.
+
+```{r notes.b, class.source = 'fold-show'}
+validate_notes = function(x) {
+  cat("Notes is validated!\n")
+  return(TRUE)
+}
+validate_notes(master_data$Notes)
+```
+
+------------------------------------------------------------------------
+
+# Benthic Invertebrate Surveys
+
+Next, we will validate the benthic invertebrate surveys. We have data from 2010-2015, 2017, 2018, 2021, 2023, and 2025. The data spans 2 distinct protocols, with MBRS from 2010-2018, and AGRRA for 2021, 2023, and 2025.
+
+```{r start3.bi, message=FALSE, warning=FALSE, results='hide'}
+
+#Setup. Load in necessary data.
+
+master_data = read.csv("Master_Benthic_Inverts_2010-2025.csv", 
+                       na.strings = c("NA")) #load master data
+collector_data = read.csv("Ref_Collectors_Turneffe.csv", 
+                          na.strings = c("NA")) #load collector data
+sites_data = read.csv("Ref_Sites_Turneffe.csv", 
+                      na.strings = c("NA")) #load sites data
+
+```
+
+## Validation Rules {.tabset .tabset-fade .tabset-pills}
+
+Scroll through the tabs to view validation rules, associated code, and results of the validation for each parameter in the benthic invertebrates dataset.
+
+### Year
+
+Must be valid year (2010-2015, 2016, 2017, 2021, 2023, or 2025).
+
+```{r year.bi, class.source = 'fold-show'}
+validate_year = function(x) {
+  valid_years = c(2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2021, 2023, 2025)
+  valid = !is.na(x) & x %in% valid_years
+  if (all(valid)) {
+    cat("Year is validated!\n")
+  } else {
+    cat("Error: These Years are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_year(master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Date
+
+Must be either MISSING or a date in the format YYYY-MM-DD with the same year as Year. No NAs.
+
+```{r date.bi, class.source = 'fold-show'}
+validate_date = function(x, y) {
+  valid_date_format = grepl("^\\d{4}-\\d{2}-\\d{2}$", x)
+  valid_year = substr(x, 1, 4) == as.character(y)
+  # Extract the year, month, and day from the Date column
+  date_parts = strsplit(x, "-")
+  # Check if the month and day are valid
+  valid_month = as.integer(sapply(date_parts, function(x) x[2])) %in% 1:12 #max 12 months
+  valid_day = as.integer(sapply(date_parts, function(x) x[3])) %in% 1:31  #max 31 days
+  # Combine all the conditions to validate
+  valid = (x == "MISSING" | (valid_date_format & valid_year & valid_month & valid_day))
+  if (all(valid)) {
+    cat("Date is validated!\n")
+  } else {
+    cat("Error: These Dates are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_date(master_data$Date, master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Locality
+
+Must be from list of valid localities in sites_data, must not be NA or MISSING.
+
+```{r locality.bi, class.source = 'fold-show'}
+validate_locality = function(x) {
+  valid_localities = sites_data$Locality
+  valid = !is.na(x) & x %in% valid_localities & x != "MISSING"
+  if (all(valid)) {
+    cat("Locality is validated!\n")
+  } else {
+    cat("Error: These Localities are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_locality(master_data$Locality)
+
+```
+
+------------------------------------------------------------------------
+
+### Site
+
+Must be from list of valid sites in sites_data, must not be NA or MISSING.
+
+```{r site.bi, class.source = 'fold-show'}
+validate_site = function(x) {
+  valid_sites = sites_data$Site
+  valid = !is.na(x) & x %in% valid_sites & x != "MISSING"
+  if (all(valid)) {
+    cat("Site is validated!\n")
+  } else {
+    cat("Error: These Sites are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_site(master_data$Site)
+
+```
+
+------------------------------------------------------------------------
+
+### Transect
+
+Must be 1-8. Allowed to be MISSING.
+
+```{r transect.bi, class.source = 'fold-show'}
+validate_transect = function(x, y) {
+  valid = (!is.na(x) & x %in% 1:8) | x == "MISSING"
+  if (all(valid)) {
+    cat("Transect is validated!\n")
+  } else {
+    cat("Error: These Transects are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_transect(master_data$Transect)
+```
+
+------------------------------------------------------------------------
+
+### Protocol
+
+Protocol must be "MBRS" for Year from 2010-2018, and "AGRRA" for Year 2021-2025.
+
+```{r protocol.bi, class.source = 'fold-show'}
+validate_protocol = function(protocol_column, year_column) {
+  valid_mbrs <- year_column >= 2010 & year_column <= 2018 & protocol_column == "MBRS"
+  valid_agrra <- year_column >= 2021 & year_column <= 2025 & protocol_column == "AGRRA"
+  valid <- valid_mbrs | valid_agrra
+  if (all(valid)) {
+    cat("Protocol is validated!\n")
+  } else {
+    cat("Error: These Protocol values are invalid:\n")
+    cat(protocol_column[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_protocol(master_data$Protocol, master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Start_Time
+
+Format must be in HH:MM (24hr 'Army' time), or MISSING. No NAs.
+
+```{r time.bi, class.source = 'fold-show'}
+validate_time = function(x) {
+  valid = rep(FALSE, length(x))
+  for (i in 1:length(x)) {
+    if (x[i] == "MISSING") {
+      valid[i] = TRUE
+    } else {
+      time_parts = strsplit(x[i], ":")[[1]]
+      if (length(time_parts) == 2) {
+        valid_hour = as.numeric(time_parts[1]) >= 0 & as.numeric(time_parts[1]) <= 23
+        valid_minute = as.numeric(time_parts[2]) >= 0 & as.numeric(time_parts[2]) <= 59
+        valid[i] = valid_hour & valid_minute
+      }
+    }
+  }
+  if (all(valid)) {
+    cat("Start_Time is validated!\n")
+  } else {
+    cat("Error: These Start_Time values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_time(master_data$Start_Time)
+```
+
+------------------------------------------------------------------------
+
+### Temp
+
+Must be either MISSING or an integer from 20-35. No NAs.
+
+```{r temp.bi, class.source = 'fold-show'}
+validate_temp = function(x) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 20:35))
+  if (all(valid)) {
+    cat("Temp is validated!\n")
+  } else {
+    cat("Error: These Temp values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_temp(master_data$Temp))
+```
+
+
+------------------------------------------------------------------------
+
+### Species
+
+Must be Conch, Cucumbers, Diadema, DiademaJuv, Lobster, or OtherUrchins
+
+```{r species.bi, class.source = 'fold-show'}
+validate_species = function(x) {
+  valid = (x == "Conch" | x =="Cucumbers" |x =="Diadema" |x =="DiademaJuv" | 
+             x =="Lobster" |x =="OtherUrchins")
+  if (all(valid)) {
+    cat("Species is validated!\n")
+  } else {
+    cat("Error: These Species values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_species(master_data$Species))
+
+```
+
+
+------------------------------------------------------------------------
+
+### Num
+
+Must be either MISSING or an integer from 0-100.
+
+```{r num.bi, class.source = 'fold-show'}
+validate_num = function(x) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 0:100))
+  if (all(valid)) {
+    cat("Num is validated!\n")
+  } else {
+    cat("Error: These Num values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_num(master_data$Num))
+```
+
+------------------------------------------------------------------------
+
+### Collector
+
+Collector should be from Collector in collector_data, or MISSING. But not NA.
+
+```{r collector.bi, class.source = 'fold-show'}
+validate_collector = function(x) {
+  valid_collectors = collector_data$Collector
+  valid = (!is.na(x) & x %in% valid_collectors) | x == "MISSING"
+  if (all(valid)) {
+    cat("Collector is validated!\n")
+  } else {
+    cat("Error: These Collector values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_collector(master_data$Collector)
+```
+
+------------------------------------------------------------------------
+
+### Notes
+
+No rules for Notes.
+
+```{r notes.bi, class.source = 'fold-show'}
+validate_notes = function(x) {
+  cat("Notes is validated!\n")
+  return(TRUE)
+}
+validate_notes(master_data$Notes)
+```
+
+------------------------------------------------------------------------
+
+
+
+# Coral Community Surveys
+
+Next, we will validate the coral community surveys. We have data from 2010-2018, 2021, and 2025. The data spans 2 distinct protocols, with MBRS from 2010-2018, and AGRRA for 2021 and 2025.
+
+
+```{r start2.c, message=FALSE, warning=FALSE, results='hide'}
+
+#Setup. Load in necessary data.
+
+master_data = read.csv("Master_Coral_Community_2010-2025.csv", 
+                       na.strings = c("NA")) #load master data
+organism_data = read.csv("Ref_Organisms_Benthic.csv", 
+                     na.strings = c("NA")) #load organisms data
+collector_data = read.csv("Ref_Collectors_Turneffe.csv", 
+                          na.strings = c("NA")) #load collector data
+sites_data = read.csv("Ref_Sites_Turneffe.csv", 
+                      na.strings = c("NA")) #load sites data
+disease_data = read.csv("Ref_Diseases_Coral.csv", 
+                      na.strings = c("NA")) #load diseases data
+
+```
+
+## Validation Rules {.tabset .tabset-fade .tabset-pills}
+
+Scroll through the tabs to view validation rules, associated code, and results of the validation for each parameter in the coral community dataset.
+
+### Year
+
+Must be valid year (2010-2018, 2021, 2025).
+
+```{r year.c, class.source = 'fold-show'}
+validate_year = function(x) {
+  valid_years = c(2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2021, 2025)
+  valid = !is.na(x) & x %in% valid_years
+  if (all(valid)) {
+    cat("Year is validated!\n")
+  } else {
+    cat("Error: These Years are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_year(master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Date
+
+Must be either MISSING or a date in the format YYYY-MM-DD with the same year as Year. No NAs.
+
+```{r date.c, class.source = 'fold-show'}
+validate_date = function(x, y) {
+  valid_date_format = grepl("^\\d{4}-\\d{2}-\\d{2}$", x)
+  valid_year = substr(x, 1, 4) == as.character(y)
+  # Extract the year, month, and day from the Date column
+  date_parts = strsplit(x, "-")
+  # Check if the month and day are valid
+  valid_month = as.integer(sapply(date_parts, function(x) x[2])) %in% 1:12 #max 12 months
+  valid_day = as.integer(sapply(date_parts, function(x) x[3])) %in% 1:31  #max 31 days
+  # Combine all the conditions to validate
+  valid = (x == "MISSING" | (valid_date_format & valid_year & valid_month & valid_day))
+  if (all(valid)) {
+    cat("Date is validated!\n")
+  } else {
+    cat("Error: These Dates are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_date(master_data$Date, master_data$Year)
+```
+------------------------------------------------------------------------
+
+### Locality
+
+Must be from list of valid localities in sites_data, must not be NA or MISSING.
+
+```{r locality.c, class.source = 'fold-show'}
+validate_locality = function(x) {
+  valid_localities = sites_data$Locality
+  valid = !is.na(x) & x %in% valid_localities & x != "MISSING"
+  if (all(valid)) {
+    cat("Locality is validated!\n")
+  } else {
+    cat("Error: These Localities are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_locality(master_data$Locality)
+
+```
+
+------------------------------------------------------------------------
+
+### Site
+
+Must be from list of valid sites in sites_data, must not be NA or MISSING.
+
+```{r site.c, class.source = 'fold-show'}
+validate_site = function(x) {
+  valid_sites = sites_data$Site
+  valid = !is.na(x) & x %in% valid_sites & x != "MISSING"
+  if (all(valid)) {
+    cat("Site is validated!\n")
+  } else {
+    cat("Error: These Sites are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_site(master_data$Site)
+
+```
+
+------------------------------------------------------------------------
+
+### Transect
+
+Must be 1-5. Allowed to be MISSING.
+
+```{r transect.c, class.source = 'fold-show'}
+validate_transect = function(x, y) {
+  valid = (!is.na(x) & x %in% 1:5) | x == "MISSING"
+  if (all(valid)) {
+    cat("Transect is validated!\n")
+  } else {
+    cat("Error: These Transects are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_transect(master_data$Transect)
+```
+------------------------------------------------------------------------
+
+### Protocol
+
+Protocol must be "MBRS" for Year from 2010-2018, and "AGRRA" for Year 2021.
+
+```{r protocol.c, class.source = 'fold-show'}
+validate_protocol = function(protocol_column, year_column) {
+  valid_mbrs <- year_column >= 2010 & year_column <= 2018 & protocol_column == "MBRS"
+  valid_agrra <- year_column >= 2021 & year_column <= 2025 & protocol_column == "AGRRA"
+  valid <- valid_mbrs | valid_agrra
+  if (all(valid)) {
+    cat("Protocol is validated!\n")
+  } else {
+    cat("Error: These Protocol values are invalid:\n")
+    cat(protocol_column[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_protocol(master_data$Protocol, master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Start_Time
+
+Format must be in HH:MM (24hr 'Army' time), or MISSING. No NAs.
+
+```{r time.c, class.source = 'fold-show'}
+validate_time = function(x) {
+  valid = rep(FALSE, length(x))
+  for (i in 1:length(x)) {
+    if (x[i] == "MISSING") {
+      valid[i] = TRUE
+    } else {
+      time_parts = strsplit(x[i], ":")[[1]]
+      if (length(time_parts) == 2) {
+        valid_hour = as.numeric(time_parts[1]) >= 0 & as.numeric(time_parts[1]) <= 23
+        valid_minute = as.numeric(time_parts[2]) >= 0 & as.numeric(time_parts[2]) <= 59
+        valid[i] = valid_hour & valid_minute
+      }
+    }
+  }
+  if (all(valid)) {
+    cat("Start_Time is validated!\n")
+  } else {
+    cat("Error: These Start_Time values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_time(master_data$Start_Time)
+```
+
+------------------------------------------------------------------------
+
+### Start_Depth, End_Depth
+
+Must be either MISSING or an integer from 1-60. No NAs.
+
+```{r depth.c, class.source = 'fold-show'}
+validate_depth = function(x, column_name) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 1:60))
+  if (all(valid)) {
+    cat(paste(column_name, "is validated!\n"))
+  } else {
+    cat("Error: These", column_name, "values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_depth(master_data$Start_Depth, "Start_Depth"))
+suppressWarnings(validate_depth(master_data$End_Depth, "End_Depth"))
+```
+
+------------------------------------------------------------------------
+
+### Temp
+
+Must be either MISSING or an integer from 20-35. No NAs.
+
+```{r temp.c, class.source = 'fold-show'}
+validate_temp = function(x) {
+  valid = (x == "MISSING" | (as.numeric(x) %in% 20:35))
+  if (all(valid)) {
+    cat("Temp is validated!\n")
+  } else {
+    cat("Error: These Temp values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_temp(master_data$Temp))
+```
+
+------------------------------------------------------------------------
+
+### Organism
+
+Must be a an Organism from organism_data.
+
+```{r organism.c, class.source = 'fold-show'}
+validate_organisms = function(x) {
+  valid_organisms = organism_data$Organism
+  valid = !is.na(x) & x %in% valid_organisms
+  if (all(valid)) {
+    cat("Organisms are validated!\n")
+  } else {
+    cat("Error: These Organism values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_organisms(master_data$Organism)
+
+```
+
+------------------------------------------------------------------------
+
+### Isolates
+
+Must be an integer from 0-20, "CLUMP", "FRAG", "MISSING", or NA
+
+```{r isolates.c, class.source = 'fold-show'}
+validate_isolates = function(x) {
+  valid = (x == "MISSING" | x =="CLUMP" |x =="FRAG" |
+             (as.integer(x) %in% 0:20))
+  if (all(valid)) {
+    cat("Isolates is validated!\n")
+  } else {
+    cat("Error: These Isolates values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_isolates(master_data$Isolates))
+
+```
+
+------------------------------------------------------------------------
+
+### Depth_Top
+
+Must be a numeric from 0.1-50
+
+```{r depth_top.c, class.source = 'fold-show'}
+validate_depth_top = function(x, column_name) {
+  valid = (x == "MISSING" | ( as.numeric(x) >= 0.1 & as.numeric(x) <= 50))
+  if (all(valid)) {
+    cat(paste(column_name, "is validated!\n"))
+  } else {
+    cat("Error: These", column_name, "values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+
+suppressWarnings(validate_depth_top(master_data$Depth_Top, "Depth_Top"))
+
+```
+
+------------------------------------------------------------------------
+
+### Max_Diam
+
+Must be either MISSING or an integer from 1-500. NAs allowed. 
+
+```{r max_diam.c, class.source = 'fold-show'}
+validate_max_diam = function(x) {
+  valid = (is.na(x) | x == "MISSING" | (as.numeric(x) %in% 1:500))
+  if (all(valid)) {
+    cat("Max_Diam is validated!\n")
+  } else {
+    cat("Error: These Max_Diam values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_max_diam(master_data$Max_Diam))
+```
+
+
+------------------------------------------------------------------------
+
+### Max_Length
+
+Must be either MISSING or an integer from 1-500. NAs allowed. 
+
+```{r max_length.c, class.source = 'fold-show'}
+validate_max_length = function(x) {
+  valid = (is.na(x) | x == "MISSING" | (as.numeric(x) %in% 1:500))
+  if (all(valid)) {
+    cat("Max_Length is validated!\n")
+  } else {
+    cat("Error: These Max_Length values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_max_length(master_data$Max_Length))
+```
+
+
+------------------------------------------------------------------------
+
+### Max_Width
+
+Must be either MISSING or an integer from 1-500. NAs allowed. 
+
+```{r max_width.c, class.source = 'fold-show'}
+validate_max_width = function(x) {
+  valid = (is.na(x) | x == "MISSING" | (as.numeric(x) %in% 1:500))
+  if (all(valid)) {
+    cat("Max_Width is validated!\n")
+  } else {
+    cat("Error: These Max_Width values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_max_width(master_data$Max_Width))
+```
+
+
+------------------------------------------------------------------------
+
+### Max_Height
+
+Must be either MISSING, a numeric from 0.1-1, or an integer from 1-500. NAs allowed. 
+
+```{r max_height.c, class.source = 'fold-show'}
+validate_max_height <- function(x) {
+  nums <- suppressWarnings(as.numeric(x))
+  valid <- dplyr::case_when(
+    is.na(x) ~ TRUE,
+    x == "MISSING" ~ TRUE,
+    !is.na(nums) & nums >= 0.1 & nums <= 1 ~ TRUE,
+    !is.na(nums) & nums %in% 1:500 ~ TRUE,
+    TRUE ~ FALSE
+  )
+  
+  if (all(valid)) {
+    cat("Max_Height is validated!\n")
+  } else {
+    cat("Error: These Max_Height values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_max_height(master_data$Max_Height))
+```
+
+------------------------------------------------------------------------
+
+### OD, TD, RD
+
+Must be either MISSING or an integer from 0-100. NAs allowed. 
+
+```{r od_td_rd.c, class.source = 'fold-show'}
+validate_OD_TD_RD = function(x, column_name) {
+  valid = is.na(x) | x == "MISSING" | (as.numeric(x) %in% 0:100)
+  if (all(valid, na.rm = TRUE)) {
+    cat(paste(column_name, "is validated!\n"))
+  } else {
+    cat("Error: These", column_name, "values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid, na.rm = TRUE))
+}
+suppressWarnings(validate_OD_TD_RD(master_data$OD, "OD"))
+suppressWarnings(validate_OD_TD_RD(master_data$TD, "TD"))
+suppressWarnings(validate_OD_TD_RD(master_data$RD, "RD"))
+
+```
+
+------------------------------------------------------------------------
+
+### Disease
+
+Must be a Disease from disease_data or NA
+
+```{r disease.c, class.source = 'fold-show'}
+validate_disease = function(x) {
+  valid_disease = disease_data$Disease
+  valid = is.na(x) | x %in% valid_disease
+  if (all(valid)) {
+    cat("Disease is validated!\n")
+  } else {
+    cat("Error: These Disease values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_disease(master_data$Disease)
+
+```
+
+
+------------------------------------------------------------------------
+
+### Percent_Pale/Percent_Bleach
+
+Must be either MISSING or an integer from 0-100. NAs allowed. 
+
+```{r percent_pale_bleach.c, class.source = 'fold-show'}
+validate_pale_bleach = function(x, column_name) {
+  valid = is.na(x) | x == "MISSING" | (as.numeric(x) %in% 0:100)
+  if (all(valid, na.rm = TRUE)) {
+    cat(paste(column_name, "is validated!\n"))
+  } else {
+    cat("Error: These", column_name, "values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid, na.rm = TRUE))
+}
+suppressWarnings(validate_pale_bleach(master_data$Percent_Pale, "Percent_Pale"))
+suppressWarnings(validate_pale_bleach(master_data$Percent_Bleach, "Percent_Bleach"))
+
+```
+
+------------------------------------------------------------------------
+
+### Bleaching
+
+Must be P, BL, PB, or UB, or MISSING or NA.
+
+```{r bleaching.c, class.source = 'fold-show'}
+validate_bleaching = function(x) {
+  valid = (x == "MISSING" | x =="P" |x =="BL" |x =="UB" | x =="PB" |is.na(x))
+  if (all(valid)) {
+    cat("Bleaching is validated!\n")
+  } else {
+    cat("Error: These Bleaching values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_bleaching(master_data$Bleaching))
+
+```
+
+
+------------------------------------------------------------------------
+
+### Base
+
+Must be either MISSING, NA, Y or N
+
+```{r base.c, class.source = 'fold-show'}
+validate_base = function(x) {
+  valid = (is.na(x) | x == "MISSING" | x == "Y" | x == "N")
+  if (all(valid)) {
+    cat("Base is validated!\n")
+  } else {
+    cat("Error: These Base values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_base(master_data$Base))
+
+```
+
+------------------------------------------------------------------------
+
+### Base_Coral
+
+Must be either MISSING, NA, or a valid species from Organisms data
+
+```{r basecor.c, class.source = 'fold-show'}
+validate_basecor = function(x) {
+  valid_organisms = organism_data$Organism
+  valid = is.na(x) | x == "MISSING" | x %in% valid_organisms
+  if (all(valid)) {
+    cat("Base_Coral are validated!\n")
+  } else {
+    cat("Error: These Base_Coral values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_basecor(master_data$Base_Coral))
+
+```
+
+------------------------------------------------------------------------
+
+### Clumps
+
+For Clump_L, Clump_P, Clump_BL, Clump_NM, Clump_TM, Clump_OM
+100 limit
+
+
+```{r clump.c, class.source = 'fold-show'}
+validate_clump = function(x, name) {
+    valid = (is.na(x) | x == "MISSING" | (as.integer(x) %in% 0:100))
+    col = name
+  if (all(valid)) {
+    cat(paste(col, "is validated!\n"))
+  } else {
+    cat(paste("Error: These", col, "values are invalid:\n"))
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_clump(master_data$Clump_L, "Clump_L"))
+suppressWarnings(validate_clump(master_data$Clump_P, "Clump_P"))
+suppressWarnings(validate_clump(master_data$Clump_BL, "Clump_BL"))
+suppressWarnings(validate_clump(master_data$Clump_NM, "Clump_NM"))
+suppressWarnings(validate_clump(master_data$Clump_TM, "Clump_TM"))
+suppressWarnings(validate_clump(master_data$Clump_OM, "Clump_OM"))
+
+```
+
+------------------------------------------------------------------------
+
+### Clump_Interval
+
+Clump_Interval should be an integer between 2 and 50
+
+```{r clumpint.c, class.source = 'fold-show'}
+validate_clumpint = function(x) {
+  valid = (is.na(x) | x == "MISSING" | (as.numeric(x) %in% 2:50))
+  if (all(valid)) {
+    cat("Clump_Interval is validated!\n")
+  } else {
+    cat("Error: These Clump_Interval values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_clumpint(master_data$Clump_Interval))
+
+```
+
+
+------------------------------------------------------------------------
+
+### Collector
+
+Collector should be from Collector in collector_data, or MISSING. But not NA.
+
+```{r collector.c, class.source = 'fold-show'}
+validate_collector = function(x) {
+  valid_collectors = collector_data$Collector
+  valid = (!is.na(x) & x %in% valid_collectors) | x == "MISSING"
+  if (all(valid)) {
+    cat("Collector is validated!\n")
+  } else {
+    cat("Error: These Collector values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_collector(master_data$Collector)
+```
+
+------------------------------------------------------------------------
+
+### Notes
+
+No rules for Notes.
+
+```{r notes.c, class.source = 'fold-show'}
+validate_notes = function(x) {
+  cat("Notes is validated!\n")
+  return(TRUE)
+}
+validate_notes(master_data$Notes)
+
+```
+
+
+------------------------------------------------------------------------
+
+
+# Coral Recruits Surveys
+
+Next, we will validate the coral recruits benthic surveys. We have data from 2021, 2023, and 2025 under AGRRA protocol.
+
+
+```{r start2.r, message=FALSE, warning=FALSE, results='hide'}
+
+#Setup. Load in necessary data.
+
+master_data = read.csv("Master_Benthic_Recruit_2023-2025.csv", 
+                       na.strings = c("NA")) #load master data
+organism_data = read.csv("Ref_Organisms_Benthic.csv", 
+                     na.strings = c("NA")) #load organisms data
+substrate_data = read.csv("Ref_Substrates_Benthic.csv", 
+                     na.strings = c("NA")) #load substrate data
+collector_data = read.csv("Ref_Collectors_Turneffe.csv", 
+                          na.strings = c("NA")) #load collector data
+sites_data = read.csv("Ref_Sites_Turneffe.csv", 
+                      na.strings = c("NA")) #load sites data
+
+
+```
+
+## Validation Rules {.tabset .tabset-fade .tabset-pills}
+
+Scroll through the tabs to view validation rules, associated code, and results of the validation for each parameter in the coral community dataset.
+
+### Year
+
+Must be valid year (2021, 2023, 2025).
+
+```{r year.r, class.source = 'fold-show'}
+validate_year = function(x) {
+  valid_years = c(2021, 2023, 2025)
+  valid = !is.na(x) & x %in% valid_years
+  if (all(valid)) {
+    cat("Year is validated!\n")
+  } else {
+    cat("Error: These Years are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_year(master_data$Year)
+```
+
+------------------------------------------------------------------------
+
+### Date
+
+Must be either MISSING or a date in the format YYYY-MM-DD with the same year as Year. No NAs.
+
+```{r date.r, class.source = 'fold-show'}
+validate_date = function(x, y) {
+  valid_date_format = grepl("^\\d{4}-\\d{2}-\\d{2}$", x)
+  valid_year = substr(x, 1, 4) == as.character(y)
+  # Extract the year, month, and day from the Date column
+  date_parts = strsplit(x, "-")
+  # Check if the month and day are valid
+  valid_month = as.integer(sapply(date_parts, function(x) x[2])) %in% 1:12 #max 12 months
+  valid_day = as.integer(sapply(date_parts, function(x) x[3])) %in% 1:31  #max 31 days
+  # Combine all the conditions to validate
+  valid = (x == "MISSING" | (valid_date_format & valid_year & valid_month & valid_day))
+  if (all(valid)) {
+    cat("Date is validated!\n")
+  } else {
+    cat("Error: These Dates are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_date(master_data$Date, master_data$Year)
+```
+------------------------------------------------------------------------
+
+### Locality
+
+Must be from list of valid localities in sites_data, must not be NA or MISSING.
+
+```{r locality.r, class.source = 'fold-show'}
+validate_locality = function(x) {
+  valid_localities = sites_data$Locality
+  valid = !is.na(x) & x %in% valid_localities & x != "MISSING"
+  if (all(valid)) {
+    cat("Locality is validated!\n")
+  } else {
+    cat("Error: These Localities are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_locality(master_data$Locality)
+
+```
+
+------------------------------------------------------------------------
+
+### Site
+
+Must be from list of valid sites in sites_data, must not be NA or MISSING.
+
+```{r site.r, class.source = 'fold-show'}
+validate_site = function(x) {
+  valid_sites = sites_data$Site
+  valid = !is.na(x) & x %in% valid_sites & x != "MISSING"
+  if (all(valid)) {
+    cat("Site is validated!\n")
+  } else {
+    cat("Error: These Sites are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_site(master_data$Site)
+
+```
+
+------------------------------------------------------------------------
+
+### Transect
+
+Must be 1-6. Allowed to be MISSING.
+
+```{r transect.r, class.source = 'fold-show'}
+validate_transect = function(x, y) {
+  valid = (!is.na(x) & x %in% 1:6) | x == "MISSING"
+  if (all(valid)) {
+    cat("Transect is validated!\n")
+  } else {
+    cat("Error: These Transects are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_transect(master_data$Transect)
+```
+
+------------------------------------------------------------------------
+
+### Quadrat
+
+Must be 1-5. Allowed to be MISSING.
+
+```{r quadrat.r, class.source = 'fold-show'}
+validate_quadrat = function(x, y) {
+  valid = (!is.na(x) & x %in% 1:5) | x == "MISSING"
+  if (all(valid)) {
+    cat("Transect is validated!\n")
+  } else {
+    cat("Error: These Transects are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_quadrat(master_data$Quadrat)
+```
+
+------------------------------------------------------------------------
+
+### Protocol
+
+Protocol must be "AGRRA"
+
+```{r protocol.r, class.source = 'fold-show'}
+validate_protocol = function(x) {
+  valid = (!is.na(x) & x == "AGRRA")
+  if (all(valid)) {
+    cat("Protocol is validated!\n")
+  } else {
+    cat("Error: These Protocol values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_protocol(master_data$Protocol)
+```
+------------------------------------------------------------------------
+
+### Substratum
+
+Must be a a Substratum from substrate_data
+
+```{r substrate.r, class.source = 'fold-show'}
+validate_substrate = function(x) {
+  valid_substrates = substrate_data$Substratum
+  valid = is.na(x) | x %in% valid_substrates
+  if (all(valid)) {
+    cat("Substratum is validated!\n")
+  } else {
+    cat("Error: These Substratum values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_substrate(master_data$Substratm)
+
+```
+
+
+------------------------------------------------------------------------
+
+### Organism
+
+Must be a an Organism from organism_data, or 'NONE'
+
+```{r organism.r, class.source = 'fold-show'}
+validate_organisms = function(x) {
+  valid_organisms = organism_data$Organism
+  valid = x == "NONE" | x %in% valid_organisms
+  if (all(valid)) {
+    cat("Organisms are validated!\n")
+  } else {
+    cat("Error: These Organism values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_organisms(master_data$Organism)
+
+```
+------------------------------------------------------------------------
+
+### Size
+
+Size must be 'SR' or 'LR' or 'MISSING'
+
+```{r size.r, class.source = 'fold-show'}
+validate_size = function(x) {
+  valid = (is.na(x) | x %in% c("SR", "LR", "MISSING"))
+  if (all(valid)) {
+    cat("Size is validated!\n")
+  } else {
+    cat("Error: These Size values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_size(master_data$Size)
+```
+
+------------------------------------------------------------------------
+
+### Num
+
+Must be either NA or an integer from 1-10. 
+
+```{r num.r, class.source = 'fold-show'}
+validate_num = function(x) {
+  valid = (is.na(x) | (as.numeric(x) %in% 1:10))
+  if (all(valid)) {
+    cat("Num is validated!\n")
+  } else {
+    cat("Error: These Num values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+suppressWarnings(validate_num(master_data$Num))
+```
+
+------------------------------------------------------------------------
+
+### Collector
+
+Collector should be from Collector in collector_data, or MISSING. But not NA.
+
+```{r collector.r, class.source = 'fold-show'}
+validate_collector = function(x) {
+  valid_collectors = collector_data$Collector
+  valid = (!is.na(x) & x %in% valid_collectors) | x == "MISSING"
+  if (all(valid)) {
+    cat("Collector is validated!\n")
+  } else {
+    cat("Error: These Collector values are invalid:\n")
+    cat(x[!valid], sep = ", ")
+  }
+  return(all(valid))
+}
+validate_collector(master_data$Collector)
+```
+
+
+
+
+

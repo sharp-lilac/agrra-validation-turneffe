@@ -1,0 +1,1317 @@
+---
+title: "Technical Validation"
+output: 
+  html_document:
+    fig_height: 6
+    fig_width: 8
+    collapse: no
+    code_folding: hide
+    theme: sandstone
+    toc: true
+    toc_depth: 4
+    toc_float: yes
+    df_print: paged
+    code_download: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+
+**Goal**
+
+Perform a technical validation on the UB-ERI MBRS and AGRRA data for Turneffe Atoll Marine Reserve, Belize, coral reef monitoring surveys from 2010-2018, 2021, 2023, 2025.
+
+```{r start, message=FALSE, warning=FALSE, results='hide'}
+
+# Setup. Load in necessary packages, set color palette, and download data from Dryad.
+
+library(rdryad) #download data from Dryad
+library(dplyr) #manipulate data
+library(tidyr) #tidy data
+library(ggplot2) #make plots
+library(ggrepel) #repel labels
+library(ggpubr) #arrange plots
+library(dunn.test) #dunn test
+library(purrr) #mapdfr
+library(knitr) #increase markdown capabilities
+library(vegan) #for rarefraction curve
+library(factoextra) # Nice PCA biplots
+library(glmmTMB)# GLMM Models with fixed and random effects, nesting, and interactions
+library(car) #functions to accompany glmmTMB (e.g., Anova)
+library(kableExtra) #customize tables
+
+palette = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#CC79A7", "#9999FF","#33A02C", "#FB9A99", 
+            "#990066", "#9933FF","#999933", "#FFCCFF","#336600", "#999999","#990000")
+
+
+files <- dryad_download("10.5061/dryad.c866t1gcn")
+file_paths <- files[[1]]
+csv_files <- file_paths[grepl("\\.csv$", file_paths, ignore.case = TRUE)]
+dfs <- lapply(csv_files, read.csv, na.strings = c("NA"))
+names(dfs) <- basename(csv_files)
+names(dfs) <- sub("\\.csv$", "", names(dfs))
+```
+
+
+# Benthic PIM Surveys
+
+```{r start_benthicpim, message=FALSE, warning=FALSE, results='hide'}
+
+#Setup. Load in necessary data.
+
+master_data = dfs$`Master_Benthic_PIM_2010-2025`
+organism_data_pre = dfs$Ref_Organisms_Benthic
+collectors_data = read.csv("Collectors_Turneffe_V4.csv", 
+                          na.strings = c("NA")) #load collector data
+sites_data = read.csv("Sites_Turneffe_V4.csv", 
+                      na.strings = c("NA")) #load sites data
+
+```
+
+
+## Rare Species Exclusion
+
+We can create a rarefraction curve of total coral species expected to be found by number of samples. Each sampled site is plotted as a line, with localities being labelled, and reef types being indicated by color (yellow being backreef, blue being deep forereef, and green being shallow forereef). 
+
+```{r rarespecies_benthicpim, fig.height=7, fig.width=12}
+
+##BETTER X-AXIS
+
+#Ensure data is only for organisms with species classification 
+master_data_species = master_data %>%
+  inner_join(x = master_data, y = organism_data_pre, by = "Organism")%>%
+  filter(!is.na(Species))%>%
+  filter(Species != "")
+
+#Format data for vegan
+data_vegan_overall = master_data_species %>%
+  group_by(Site, Species) %>%
+  summarise(Count = n()) %>%
+  select(Site, Species, Count) %>%
+  pivot_wider(names_from = Species, values_from = Count, values_fill = 0)
+rownames_overall_vegan = data_vegan_overall$Site
+data_vegan_overall = data_vegan_overall[,-1]
+rownames(data_vegan_overall) = rownames_overall_vegan
+
+#Create accompanying metadata
+metadata = master_data_species %>%
+  group_by(Site, Protocol) 
+
+#Fetch data for curve
+C = rarecurve(data_vegan_overall, step = 50, tidy = TRUE)
+
+#Fetch data on reef types on localities based on site and add to curve data
+reef_typesC = C %>%
+  distinct(Site) %>%
+  mutate(Type = case_when(
+    grepl("BR$", Site) ~ "BR",
+    grepl("DFR$", Site) ~ "DFR",
+    TRUE ~ "SFR"
+  )) %>%
+  mutate(Locality = gsub("BR$|DFR$|SFR$", "", Site))
+C = left_join(C, reef_typesC, by = "Site")
+
+#Determine where each rarecurve line will end, so labels can be placed properly
+last_pointsC = C %>%
+  group_by(Site) %>%
+  slice_tail(n = 1)
+
+#Create plot theme for rarecurve
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 0, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+h_line1 = geom_hline(yintercept = c(10, 20, 30, 40), linetype = "dashed", color = "darkgrey", size = 0.75) 
+h_line2 = geom_hline(yintercept = c(5, 15, 25, 35, 45), linetype = "dotted", color = "darkgrey", size = 0.5) 
+v_line1 = geom_vline(xintercept = seq(0, 1500, by = 250), linetype = "dotted", color = "darkgrey", size = 0.5) 
+
+RareC = ggplot(C, aes(x = Sample, y = Species, group = Site, color = Type)) + h_line1 + h_line2 + v_line1 +
+  geom_line(size = 0.8) +
+  theme_classic() +
+  scale_color_manual(name = "Reef Type", 
+                    values = palette[1:3]) +
+  coord_cartesian(ylim = c(0, 45)) +
+  geom_label_repel(data = last_pointsC, aes(label = Locality, x = Sample, y = Species),
+                   label.padding = unit(0.1, "lines"), fill = "white", color = "black",
+                   box.padding = unit(0.4, "lines"),
+                   segment.size = 0.7,
+                   force = 20, size = 6) + xy+
+  scale_x_continuous(breaks = seq(0, 1500, by = 250))
+
+#ggsave("fig2_rarefactions.png", plot = RareC, width = 14, height = 8, units = "in", dpi = 800)
+RareC
+```
+
+## Differential Use of Benthic Codes
+
+Overall, we can see the percent of our data that has a listed Collector. We can also filter our data so only data with a Collector is being used for the bias checks. 
+
+```{r collectoroverallpercent1_benthicpim, fig.height=2.5, fig.width=10}
+missing_percentage <- 100 * 
+  sum(master_data$Collector == "MISSING") / nrow(master_data)
+cat("Data with a Collector:", sprintf("%.2f%%", 100 - missing_percentage))
+collector_data = filter(master_data, Collector != "MISSING") %>%
+  mutate(Organism = ifelse(Organism == "TA_TAM", "TA", Organism))
+```
+
+Next we can look at the contributions of each Collector towards the total collected data, colored by AGRRA vs MBRS protocol. Collectors above the line contribute to more than 3% of the data.
+
+```{r collectoroverallpercent2_benthicpim, fig.height=3, fig.width=10}
+
+summary_data = collector_data %>%
+  group_by(Collector, Protocol) %>%
+  summarise(Percentage = n() / nrow(collector_data) * 100)%>%
+  arrange(Protocol, Percentage)
+summary_data[3, 1] = "NIMA (AGRRA)"
+summary_data[4, 1] = "KENO (AGRRA)"
+summary_data[15, 1] = "NIMA (MBRS)"
+summary_data[9, 1] = "KENO (MBRS)"
+
+
+collector_order = summary_data$Collector
+
+ggplot(summary_data, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
+  geom_hline(yintercept = c(5, 10, 15, 20), linetype = "dashed", color = "darkgrey", size = 0.75) +
+    geom_hline(yintercept = c(2.5, 7.5, 12.5, 17.5), linetype = "dotted", color = "darkgrey", size = 0.5) +
+  geom_col(width = 1, color = "black") + theme_classic() +
+  labs(x = "Collector", y = "Percent of Data") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_manual(name = "Protocol", 
+                    values = c("AGRRA" = "#56B4E9", "MBRS" = "#E69F00")) +
+      geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 3),
+            fill = "grey", alpha = 0.05, inherit.aes = FALSE) +
+    geom_hline(yintercept = 3, linetype = "solid", color = "black", size = 0.5)
+
+
+
+```
+
+### Protocol Bias
+
+
+First, let's make summary datasets for each type of benthic code/classification, which summarize percent of transects that each benthic code/classfiication account for under each protocol. 
+
+```{r organismcodebuckets1_benthicpim, fig.height=9, fig.width=12}
+
+options(scipen = 999)
+
+#Create data storing information on the relationship between benthic codes and the 3 classification systems
+organism_data = organism_data_pre%>%
+  select(Organism, Bucket, Bucket2, AGRRA_Bucket)%>% distinct()
+
+#Determine how many observations were made per unique transect
+transect_counts = collector_data %>%
+  group_by(Uniq_Transect) %>%
+  summarise(Observations = n_distinct(row_number()))
+
+#Create summary data for bucket system 1 
+summary_data2 = collector_data %>%
+  left_join(organism_data %>% select(Organism, Bucket), by = "Organism")%>%
+  arrange(Organism, Bucket)%>%
+  group_by(Bucket, Protocol) %>%
+  summarise(Count = n())%>%
+  na.omit()%>%
+  mutate(
+    Observations = case_when(
+      Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
+      Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))))%>% 
+  mutate(
+    Count_per_100Observations = (Count / (Observations / 100))) %>% 
+      arrange( Protocol, Count_per_100Observations) %>%
+  filter(Bucket != "MISSING" & Bucket != "MANI" & Bucket != "MUSS")
+
+#Create summary data for bucket system 2 
+summary_data3 = collector_data %>%
+  left_join(organism_data %>% select(Organism, Bucket2), by = "Organism")%>%
+  arrange(Organism, Bucket2)%>%
+  group_by(Bucket2, Protocol) %>%
+  summarise(Count = n())%>%
+  na.omit()%>%
+  mutate(
+    Observations = case_when(
+      Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
+      Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))))%>% 
+  mutate(
+    Count_per_100Observations = (Count / (Observations / 100))) %>% 
+      arrange( Protocol, Count_per_100Observations) %>%
+  filter(Bucket2 != "MISSING")
+
+#Create summary data for AGRRA's bucket system
+summary_data4 = collector_data %>%
+  left_join(organism_data %>% select(Organism, AGRRA_Bucket), by = "Organism")%>%
+  arrange(Organism, AGRRA_Bucket)%>%
+  group_by(AGRRA_Bucket, Protocol) %>%
+  summarise(Count = n())%>%
+  na.omit()%>%
+  mutate(
+    Observations = case_when(
+      Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
+      Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))))%>% 
+  mutate(
+    Count_per_100Observations = (Count / (Observations / 100))) %>% 
+      arrange( Protocol, -Count_per_100Observations) 
+
+#Create summary data for raw organism codes
+summary_data5 = collector_data %>%
+  arrange(Organism)%>%
+  group_by(Organism, Protocol) %>%
+  summarise(Count = n())%>%
+  na.omit()%>%
+  mutate(
+    Observations = case_when(
+      Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
+      Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))))%>% 
+  mutate(
+    Count_per_100Observations = (Count / (Observations / 100))) %>% 
+      arrange( Protocol, Count_per_100Observations) 
+
+#Create summary data for bucket system 1 by unique transect
+summary_data6 <- collector_data %>%
+  left_join(organism_data %>% select(Organism, Bucket), by = "Organism") %>%
+  arrange(Organism, Bucket) %>%
+  group_by(Bucket, Protocol, Uniq_Transect) %>%
+  summarise(Count = n()) %>%
+  na.omit() %>%
+  left_join(transect_counts, by = "Uniq_Transect")%>% 
+  mutate(
+    Percent_of_Transect = (Count / Observations * 100)) %>% 
+      arrange(Percent_of_Transect) %>%
+  filter(Bucket != "MISSING" & Bucket != "MANI" & Bucket != "MUSS")
+
+#Create summary data for bucket system 2 by unique transect
+summary_data7 <- collector_data %>%
+  left_join(organism_data %>% select(Organism, Bucket2), by = "Organism") %>%
+  arrange(Organism, Bucket2) %>%
+  group_by(Bucket2, Protocol, Uniq_Transect) %>%
+  summarise(Count = n()) %>%
+  na.omit() %>%
+  left_join(transect_counts, by = "Uniq_Transect")%>% 
+  mutate(
+    Percent_of_Transect = (Count / Observations * 100)) %>% 
+      arrange(Percent_of_Transect) %>%
+  filter(Bucket2 != "MISSING" & Bucket2 != "MANI" & Bucket2 != "MUSS")
+
+#Create summary data for agrra's classification system by unique transect
+summary_data8 <- collector_data %>%
+  left_join(organism_data %>% select(Organism, AGRRA_Bucket), by = "Organism") %>%
+  arrange(Organism, AGRRA_Bucket) %>%
+  group_by(AGRRA_Bucket, Protocol, Uniq_Transect) %>%
+  summarise(Count = n()) %>%
+  na.omit() %>%
+  left_join(transect_counts, by = "Uniq_Transect")%>% 
+  mutate(
+    Percent_of_Transect = (Count / Observations * 100)) %>% 
+      arrange(Percent_of_Transect) %>%
+  filter(AGRRA_Bucket != "MISSING" & AGRRA_Bucket != "MANI" & AGRRA_Bucket != "MUSS")
+
+#Create summary data for raw organism codes by unique transect
+summary_data9 <- collector_data %>%
+  left_join(organism_data %>% select(Organism, AGRRA_Bucket), by = "Organism") %>%
+  arrange(Organism) %>%
+  group_by(Organism, Protocol, Uniq_Transect) %>%
+  summarise(Count = n()) %>%
+  na.omit() %>%
+  left_join(transect_counts, by = "Uniq_Transect")%>% 
+  mutate(
+    Percent_of_Transect = (Count / Observations * 100)) %>% 
+      arrange(Percent_of_Transect) %>%
+  filter(Organism != "MISSING" & Organism != "MANI" & Organism != "MUSS") %>% 
+      arrange(Percent_of_Transect) 
+
+#Determine order of benthic codes/classifications so specific groups may be easily plotted
+code_order = unique(summary_data2$Bucket)
+code_order2 = unique(summary_data3$Bucket2)
+code_orderAGRRA = unique(summary_data4$AGRRA_Bucket)
+code_orderall = filter(summary_data5, Protocol == "AGRRA")$Organism
+
+```
+
+Now we can plot a boxplot of percent observations of the eight most commonly used codes separated by protocol. A is the raw codes, B is buckets designed to represent the lowest shared categories between all codes, C is buckets from B but with coral grouped and fire coral grouped, D is classification system used by AGRRA. 
+
+
+```{r organismcodebuckets2_benthicpim, fig.height=12, fig.width=12}
+
+#Theme for plot
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 90, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+h_line1 = geom_hline(yintercept = c(25, 50, 75, 100), linetype = "dashed", color = "darkgrey", size = 0.75) 
+h_line2 = geom_hline(yintercept = c(12.5, 37.5, 62.5, 87.5), linetype = "dotted", color = "darkgrey", size = 0.5) 
+
+A = ggplot(filter(summary_data9, Organism %in% tail(code_orderall, 8)), 
+                             aes(x = factor(Organism, levels = tail(code_orderall, 8)),
+                                 y = Percent_of_Transect, fill = Protocol)) + h_line1 + h_line2 +
+                      geom_boxplot(color = "black", width = 1) +  theme_classic()+
+                      labs(x = "", y = "Percent Observations per Transect", title = "A") +
+                      scale_fill_manual(values = palette[1:2], name = "Protocol") + xy +
+                      coord_cartesian(ylim = c(0, 100)) + facet_wrap(~Protocol)
+
+B = ggplot(filter(summary_data6, Bucket %in% tail(code_order, 8)), 
+                             aes(x = factor(Bucket, levels = tail(code_order, 8)),
+                                 y = Percent_of_Transect, fill = Protocol)) + h_line1 + h_line2 +
+                      geom_boxplot(color = "black", width = 1) +  theme_classic()+
+                      labs(x = "", y = "", title = "B") +
+                      scale_fill_manual(values = palette[1:2], name = "Protocol") + xy +
+                      coord_cartesian(ylim = c(0, 100)) + facet_wrap(~Protocol)
+
+C = ggplot(filter(summary_data7, Bucket2 %in% tail(code_order2, 8)), 
+                             aes(x = factor(Bucket2, levels = tail(code_order2, 8)),
+                                 y = Percent_of_Transect, fill = Protocol)) + h_line1 + h_line2 +
+                      geom_boxplot(color = "black", width = 1) +  theme_classic()+
+                      labs(x = "", y = "", title = "C") +
+                      scale_fill_manual(values = palette[1:2], name = "Protocol") + xy +
+                      coord_cartesian(ylim = c(0, 100)) + facet_wrap(~Protocol)
+
+D = ggplot(filter(summary_data8, AGRRA_Bucket %in% head(code_orderAGRRA, 8)), 
+                             aes(x = factor(AGRRA_Bucket, levels = rev(head(code_orderAGRRA, 8))),
+                                 y = Percent_of_Transect, fill = Protocol)) + h_line1 + h_line2 +
+                      geom_boxplot(color = "black", width = 1) +  theme_classic()+
+                      labs(x = "", y = "Percent Observations per Transect", title = "D") +
+                      scale_fill_manual(values = palette[1:2], name = "Protocol") + xy +
+                      coord_cartesian(ylim = c(0, 100)) + facet_wrap(~Protocol)
+
+plot_row1 = ggarrange(A, B, C, ncol = 3, common.legend = TRUE, legend = "top")
+plot_row2 = ggarrange(D, ncol = 1, legend = "none")
+Protocol_Plot = ggarrange(plot_row1, plot_row2, nrow = 2, heights = c(1, 1.3))
+
+#ggsave("fig3_protocolcodes.png", plot = Protocol_Plot, width = 12, height = 12, units = "in", dpi = 800)
+Protocol_Plot
+
+```
+
+### Collector Bias
+
+
+We can also make a boxplot of percent observations of each code bucket type separated by collector. This is using bucket system 2, and filtering only collectors that contributed more than 3% of total data. A shows AGRRA collectors and B shows MBRS collectors.
+
+```{r organismcodebuckets3_benthicpim, fig.height=10, fig.width=12}
+
+#Create summary data for bucket system 2 by unique transect for specific collectors
+summary_data3_collector2 = collector_data %>%
+  left_join(organism_data %>% select(Organism, Bucket2), by = "Organism")%>%
+  arrange(Organism, Bucket2)%>%
+  group_by(Bucket2, Collector, Protocol, Uniq_Transect) %>%
+  summarise(Count = n())%>%
+  na.omit()%>%
+  left_join(transect_counts, by = "Uniq_Transect")%>% 
+    na.omit()%>% 
+  mutate(
+    Percent_of_Transect = (Count / Observations * 100)) %>% 
+      arrange(Percent_of_Transect) %>%
+  filter(Bucket2 != "MISSING" & Bucket2 != "MANI" & Bucket2 != "MUSS")
+
+#Determine order of benthic codes/classifications so specific groups may be easily plotted
+code_order2_collector2 = unique(summary_data3_collector2$Bucket2)
+
+#Plot theme
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 90, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+h_line1 = geom_hline(yintercept = c(25, 50, 75, 100), linetype = "dashed", color = "darkgrey", size = 0.75) 
+h_line2 = geom_hline(yintercept = c(12.5, 37.5, 62.5, 87.5), linetype = "dotted", color = "darkgrey", size = 0.5) 
+
+#AGRRA plot
+summary_data3_collector2_agrra = filter(summary_data3_collector2, Protocol == "AGRRA" & Collector != "ANLI")
+A = ggplot(filter(summary_data3_collector2_agrra, Bucket2 %in% tail(code_order2, 8)), 
+                             aes(x = factor(Bucket2, levels = tail(code_order2, 8)),
+                                 y = Percent_of_Transect, fill = Collector)) + h_line1 + h_line2 +
+                      geom_boxplot(color = "black", width = 1) +  theme_classic()+
+                      labs(x = "", y = "", title = "A") +
+                      scale_fill_manual(values = palette[c(1,5,6)], name = "Collector") + xy +
+                      coord_cartesian(ylim = c(0, 100)) + facet_wrap(~Collector)+
+  theme(strip.text = element_blank(), strip.background = element_blank())+
+  theme(legend.position = "none")
+#MBRS plot
+summary_data3_collector2_mbrs = filter(summary_data3_collector2, Protocol == "MBRS" & Collector %in% c("CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))
+B = ggplot(filter(summary_data3_collector2_mbrs, Bucket2 %in% tail(code_order2, 8)), 
+                             aes(x = factor(Bucket2, levels = tail(code_order2, 8)),
+                                 y = Percent_of_Transect, fill = Collector)) + h_line1 + h_line2 +
+                      geom_boxplot(color = "black", width = 1) +  theme_classic()+
+                      labs(x = "", y = "", title = "B") +
+                      scale_fill_manual(values = palette[c(2,3,4,5,6,7,8)], name = "Collector") + xy +
+                      coord_cartesian(ylim = c(0, 100)) + facet_wrap(~Collector)+
+  theme(strip.text = element_blank(), strip.background = element_blank())+
+  theme(legend.position = "none")
+#Plot legend
+legend_plot = ggplot(filter(summary_data3_collector2, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA")), 
+                     aes(x = 1, y = 1, fill = Collector)) +
+  geom_bar(stat = "identity", color = "black") +
+  scale_fill_manual(values = palette) +
+  theme_void() +
+  theme(legend.position = "top") +
+  guides(fill = guide_legend(title = "Collector"))
+
+CollectorCode_Plot = ggarrange(legend_plot, A, B, ncol = 1, nrow = 3, heights = c(0.155, 1, 1.65))
+#ggsave("fig4_collectorcodes.png", plot = CollectorCode_Plot, width = 12, height = 10, units = "in", dpi = 800)
+CollectorCode_Plot
+
+```
+
+### Principal Components Analysis
+
+Let's prepare our data for a PCA. We will use Bucket system 2. 
+
+
+```{r pca1_benthicpim, fig.height=10, fig.width=10}
+
+#Use summary_data3_collector2 to make pca data. Format as wide data. 
+pca_data =summary_data3_collector2 %>%
+  select(Uniq_Transect, Collector, Protocol, Bucket2, Percent_of_Transect) %>%
+  pivot_wider(names_from = Bucket2, values_from = Percent_of_Transect, values_fill = 0)%>% ungroup()
+duplicated_transects = pca_data %>%
+  count(Uniq_Transect) %>%
+  filter(n > 1) %>%
+  pull(Uniq_Transect)
+pca_data <- pca_data %>%
+  filter(!Uniq_Transect %in% duplicated_transects)
+#Preserve detailed version as metadata
+pca_data_metadata = pca_data
+rownames_pca = pca_data$Uniq_Transect
+pca_data = select(pca_data,-c("Protocol", "Uniq_Transect", "Collector"))
+rownames(pca_data) = rownames_pca
+
+
+```
+
+
+
+Next, we can perform the PCA. Let's view a summary of the first 2 principal components. We see here that the first 2 components cumulatively explain a proportion of 0.845 (or 84.5%) of variation in the total data.
+
+```{r pca2_benthicpim, fig.height=4, fig.width=10, results='asis'}
+
+# Perform PCA
+pca_result = prcomp(pca_data)
+as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
+
+```
+
+
+A scree plot allows us to visualize the percent of variation that can be explained by each component (or dimension).
+
+```{r pca3_benthicpim, fig.height=5, fig.width=10}
+
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 90, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+
+fviz_eig(pca_result, addlabels = TRUE, barfill = "#56B4E9", barcolor = "black") + theme_classic()+ xy + 
+  geom_segment(aes(x = 3, xend = 3, y = 9.7, yend = 28.5), linetype = "dashed", color = "black") +
+  annotate("text", x = 3, y = 30, 
+           label = "Elbow", hjust = 0.47, vjust = 0, color = "black", size = 4)+
+  xlab(label = "Principal Components") + ylab(label = "Variance Explained")+ggtitle("")
+```
+
+
+
+Now we can investigate the loadings, which are how each Bucket contributes to each principal component. The greatest contributors to PC1 are solely DYNSUB, and MA. PC2 is driven by TA_SUB and MA. PC1 and PC2 are driven by MA in the opposite way. 
+
+```{r pca4_benthicpim, fig.height=4, fig.width=10}
+
+loadings = pca_result$rotation
+loadings_pc1 = loadings[, 1]
+loadings_pc2 = loadings[, 2]
+loadings_df = data.frame(Loading_PC1 = (loadings_pc1),
+                         Loading_PC2 = (loadings_pc2))
+loadings_df = loadings_df %>%
+  mutate(Loading_PC1 = format(round(Loading_PC1, 3), nsmall = 3),
+         Loading_PC2 = format(round(Loading_PC2, 3), nsmall = 3)) 
+head(loadings_df)
+```
+
+
+
+Moving forward with the PCA, we can extract the principal component scores for each row of data and add these to our original data set.
+
+```{r pca5_benthicpim, fig.height=4, fig.width=10}
+
+# Extract principal component scores
+pc_scores = as.data.frame(pca_result$x)
+# Add to original datasets
+pca_data_metadata_supplemented = cbind(pca_data_metadata, pc_scores)
+
+```
+
+------------------------------------------------------------------------
+
+We can now visualize the results of the PCA with a biplot. We see Protocol seem to be spread across the map, with MBRS being lower on PC2 and AGRRA a little high on PC1. 
+
+```{r pca6_benthicpim, fig.height=5, fig.width=10}
+
+#theme
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 0, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+h_line1 = geom_hline(yintercept = c(-60, -30, 0, 30, 60), linetype = "dashed", color = "darkgrey", size = 0.75) 
+h_line2 = geom_hline(yintercept = c(-45, -15, 15, 45), linetype = "dotted", color = "darkgrey", size = 0.5) 
+h_line3 = geom_hline(yintercept = 0, color = "black", size = 1) 
+v_line1 = geom_vline(xintercept = 0, color = "black", size = 1) 
+
+#protocol
+means <- pca_data_metadata_supplemented %>%
+  group_by(Protocol) %>%
+  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
+A = ggplot() +
+    theme_classic() + xy +h_line1 + h_line2 + h_line3+v_line1+
+    stat_ellipse(data = pca_data_metadata_supplemented,
+                 aes(x = PC1, y = PC2, fill = Protocol), level = 0.95, geom = "polygon", alpha = 0.2, color = "black") +
+    geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Protocol), size = 4, shape = 19) + 
+  labs(x = "Principal Component 1", y = "Principal Component 2", title = "A") +
+  scale_fill_manual(values = palette) +
+  scale_color_manual(values = palette) +
+  scale_x_continuous(breaks = seq(-80, 80, by = 20)) +
+  coord_cartesian(xlim = c(-80, 80)) 
+
+
+```
+
+And Collector is spread across as well.
+
+
+```{r pca7_benthicpim, fig.height=11, fig.width=10}
+
+# Calculate means for each Collector
+means <- pca_data_metadata_supplemented %>%
+  filter(Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA")) %>%
+  group_by(Collector) %>%
+  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
+
+B = ggplot() +
+  theme_classic() + 
+  xy + 
+  h_line1 + h_line2 + h_line3 + v_line1 +
+  stat_ellipse(data = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA")),
+               aes(x = PC1, y = PC2, fill = Collector), level = 0.95, geom = "polygon", alpha = 0.2, color = "black") +
+  geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Collector), size = 4, shape = 19) + 
+  labs(x = "Principal Component 1", y = "Principal Component 2", title = "B") +
+  scale_fill_manual(values = palette[c(1,2,3,4,11,6,9)]) +
+    scale_color_manual(values = palette[c(1,2,3,4,11,6,9)])+
+  scale_x_continuous(breaks = seq(-80, 80, by = 20)) +
+  coord_cartesian(xlim = c(-80, 80)) 
+
+PCA_Plot = ggarrange(A, B, ncol = 1, nrow = 2)
+
+#ggsave("fig5_benthicpca.png", plot = PCA_Plot, width = 10, height = 11, units = "in", dpi = 800)
+PCA_Plot
+
+```
+
+Let's do a Kruskal-Wallis to investigate further. These garner significant p-values.
+
+
+```{r kruskal1_benthicpim, fig.height=4, fig.width=10}
+
+kw_test_pc1_collector = kruskal.test(PC1 ~ Collector, data = pca_data_metadata_supplemented)
+kw_test_pc2_collector = kruskal.test(PC2 ~ Collector, data = pca_data_metadata_supplemented)
+
+
+
+bind_rows(
+  data.frame(Test = "PC1 Collector", p.value = kw_test_pc1_collector$p.value),
+  data.frame(Test = "PC2 Collector", p.value = kw_test_pc2_collector$p.value),
+) %>%
+  mutate(p.value = sprintf("%.2e", p.value))
+
+```
+
+Running a post-hoc Dunn helps us understand specific Collector pairs that differ. Let’s display all Collector pairs that differ significantly. We can show whether these Collectors are from within the same Protocols, or from different Protocols.
+
+
+```{r dunn1_benthicpim, fig.height=4, fig.width=10, include=FALSE}
+
+dunn = dunn.test(filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$PC1, 
+                 g = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$Collector, 
+                 method = "bonferroni")
+
+dunn2 = dunn.test(filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$PC2, 
+                 g = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$Collector, 
+                 method = "bonferroni")
+
+```
+
+```{r dunn2_benthicpim, eval=FALSE, fig.height=4, fig.width=10}
+
+dunn = dunn.test(filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$PC1, 
+                 g = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$Collector, 
+                 method = "bonferroni")
+
+dunn2 = dunn.test(filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$PC2, 
+                 g = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$Collector, 
+                 method = "bonferroni")
+
+```
+As suspected earlier, it is the specific differences of individuals in MBRS SMP years driving the differences. Of the 9 collector pairs that differ for PC1, TABA is involved in 6, and CECA is involved in 4. The 5 significant collector pairs with highest Z-values all incude TABA. 
+
+```{r dunn3_benthicpim,  fig.height=4, fig.width=10}
+
+dunn = data.frame(dunn$comparisons, dunn$Z, dunn$P.adjusted)
+dunn2 = data.frame(dunn2$comparisons, dunn2$Z, dunn2$P.adjusted)
+
+dunn_df = filter(dunn, `dunn.P.adjusted` < 0.05) %>% 
+  mutate("P Value" = sprintf("%.2e", (`dunn.P.adjusted`)), 
+         "Pairs" = `dunn.comparisons`, 
+         "Z Value (PC1)" = abs(`dunn.Z`)) %>% 
+  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
+  select(Collector_1, Collector_2,  `Z Value (PC1)`, `P Value`)%>%
+  arrange(desc(`Z Value (PC1)`))
+head(dunn_df, 5)
+
+
+```
+
+
+
+Similarly, for PC2, BOYO drives the difference, being present in 5 of the 10 differences. However, of the 5 highest significant Z values, she is only present in 2 of the pairs. 
+
+```{r dunn4_benthicpim,  fig.height=4, fig.width=10}
+
+
+dunn_df2 = filter(dunn2, `dunn2.P.adjusted` < 0.05) %>% 
+  mutate("P Value" = sprintf("%.2e", (`dunn2.P.adjusted`)), 
+         "Pairs" = `dunn2.comparisons`, 
+         "Z Value (PC1)" = abs(`dunn2.Z`)) %>% 
+  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
+  select(Collector_1, Collector_2,  `Z Value (PC1)`, `P Value`)%>%
+  arrange(desc(`Z Value (PC1)`))
+head(dunn_df2, 5)
+
+```
+
+
+
+# Reef Fish Surveys
+
+```{r start_fish, message=FALSE, warning=FALSE, results='hide'}
+
+#Setup. Load in necessary data.
+
+master_data = read.csv("Master_Fish_Survey_2010-2023_V19.csv", 
+                       na.strings = c("NA")) #load master data
+fish_data = read.csv("Fish_Species_V5.csv", 
+                     na.strings = c("NA")) #load fish data
+collector_data = read.csv("Collectors_Turneffe_V4.csv", 
+                          na.strings = c("NA")) #load collector data
+sites_data = read.csv("Sites_Turneffe_V4.csv", 
+                      na.strings = c("NA")) #load sites data
+
+```
+
+
+
+## Differential Identification of Fish
+
+
+Overall, we can see the percent of our data that has a listed Collector. We can also filter our data so only data with a Collector are being used for the bias checks. We can also filter our data so it excludes 0-5cm Size Class and Fish that were only surveyed for in certain years or protocols.
+
+
+```{r collectoroverallpercent1_fish, fig.height=2.5, fig.width=10}
+missing_percentage <- 100 * 
+  sum(master_data$Collector == "MISSING") / nrow(master_data)
+cat("Data with a Collector:", sprintf("%.2f%%", 100 - missing_percentage))
+collector_data = filter(master_data, Collector != "MISSING", Size_Class != "0_05", 
+                        Fish != "Yellowhead Wrasse", Fish != "Threespot Damselfish",
+                        Fish != "Slippery Dick Wrasse", Fish != "Puddingwife Wrasse",
+                        Fish != "Sheepshead Porgy", Fish != "Saucereye Porgy",
+                        Fish != "Lionfish") 
+```
+
+Next we can look at the contributions of each Collector towards the total collected data, colored by AGRRA vs MBRS protocol. Collectors above the line contribute to more than 3% of the data.
+
+```{r collectoroverallpercent2_fish, fig.height=3, fig.width=10}
+
+summary_data = collector_data %>%
+  group_by(Collector, Protocol) %>%
+  summarise(Percentage = n() / nrow(collector_data) * 100)%>%
+  arrange(Protocol, Percentage)
+
+
+collector_order = summary_data$Collector
+
+ggplot(summary_data, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
+  geom_hline(yintercept = c(5, 10, 15, 20), linetype = "dashed", color = "darkgrey", size = 0.75) +
+    geom_hline(yintercept = c(2.5, 7.5, 12.5, 17.5), linetype = "dotted", color = "darkgrey", size = 0.5) +
+  geom_col(width = 1, color = "black") + theme_classic() +
+  labs(x = "Collector", y = "Percent of Data") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_fill_manual(name = "Protocol", 
+                    values = c("AGRRA" = "#56B4E9", "MBRS" = "#E69F00")) +
+      geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 3),
+            fill = "grey", alpha = 0.05, inherit.aes = FALSE) +
+    geom_hline(yintercept = 3, linetype = "solid", color = "black", size = 0.5)
+
+
+
+```
+
+
+
+
+We can similarly look at how many of each fish were found throughout the surveys. We can see most fish have at least 10 observations, and nine species have over 1000 observations.
+
+```{r collector_bias2.1, fig.height=8, fig.width=15}
+
+summary_data2 = collector_data %>%
+  group_by(Fish) %>%
+  summarise(Sum = sum(Observations)) %>%
+  left_join(fish_data %>% select(Fish, Fish_Family), by = "Fish")%>%
+  arrange(Fish_Family, Sum, Fish)
+
+fish_order = summary_data2$Fish
+
+ggplot(filter(summary_data2, Sum != 0), 
+       aes(x = factor(Fish, levels = fish_order), y = log(Sum), fill = Fish_Family)) +
+    geom_hline(yintercept = log1p(c(1, 10, 100, 1000, 10000)), linetype = "solid", color = "black", size = 1) +
+    geom_hline(yintercept = log1p(c(2, 20, 200, 2000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+    geom_hline(yintercept = log1p(c(3, 30, 300, 3000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+    geom_hline(yintercept = log1p(c(4, 40, 400, 4000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+    geom_hline(yintercept = log1p(c(5, 50, 500, 5000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+    geom_hline(yintercept = log1p(c(6, 60, 600, 6000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+    geom_hline(yintercept = log1p(c(7,  70, 700, 7000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+    geom_hline(yintercept = log1p(c(8, 80, 800, 8000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+      geom_hline(yintercept = log1p(c(9, 90, 900, 9000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+
+  geom_col(color = "black", width = 1, alpha = 0.8) + theme_classic() +
+
+  labs(x = "Fish Species", y = "Observations") +
+  theme(legend.position = "top", axis.text.x = element_text(angle = 90, face = "bold", size = 11, 
+                                                            vjust = 0.5, hjust = 1),
+        axis.text.y = element_text( face = "bold", size = 11, 
+                                                            vjust = 0.5, hjust = 1),
+        axis.title = element_text(size = 13),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14)) +
+  coord_cartesian(ylim = c(0, log1p(9000))) + 
+  scale_fill_manual(values = palette, name = "Fish Family") +
+    scale_y_continuous(breaks = log1p(c(1, 10, 100, 1000, 10000)), labels = c(1, 10, 100, 1000, 10000))
+
+
+```
+
+Before doing the analyses, we will also filter the data so it only includes data from collectors that contribute \>3%. This is so we can assess collector bias between the primary data collectors. Similarly, we filter out fish species with fewer than 50 total observations across all years, as we are not looking at the effect of collector bias on finding rare fish here.
+
+```{r collector_bias2.22, fig.height=3.5, fig.width=10}
+
+filtered_data = collector_data %>%
+  group_by(Collector) %>%
+  summarise(Percentage = n() / nrow(collector_data) * 100) %>%
+  filter(Percentage > 3) %>%
+  inner_join(collector_data, by = "Collector") %>%
+  select(Collector, Year, Site, Uniq_Transect, Protocol, Fish, Size_Class, Observations)
+
+filtered_data = filtered_data %>%
+  group_by(Fish) %>%
+  summarise(TotalObservations = sum(Observations)) %>%
+  filter(TotalObservations >= 50) %>%
+  inner_join(filtered_data, by = "Fish")
+
+
+```
+
+
+### Principal Components Analysis
+
+#### Fish Counts
+
+Let's prepare our data for a PCA. 
+
+
+```{r pca1_benthicpim, fig.height=10, fig.width=10}
+
+#Use filtered_data to make pca data. Format as wide data. Total fish from size classes to single sum. 
+pca_data = filtered_data %>%
+  select(Uniq_Transect, Collector, Protocol, Fish, Observations) %>%
+  group_by(Uniq_Transect, Collector, Protocol, Fish) %>%
+  summarize(Observations = sum(Observations)) %>%
+  pivot_wider(names_from = Fish, values_from = Observations, values_fill = 0) %>%
+  ungroup()
+
+#Preserve detailed version as metadata
+pca_data_metadata = pca_data
+rownames_pca = pca_data$Uniq_Transect
+pca_data = select(pca_data,-c("Protocol", "Uniq_Transect", "Collector"))
+rownames(pca_data) = rownames_pca
+
+
+```
+
+
+Next, we can perform the PCA. Let's view a summary of the first 2 principal components. We see here that the first 2 components cumulatively explain a proportion of 0.421 (or 42.1%) of variation in the total data.
+
+```{r collector_bias4, fig.height=4, fig.width=10, results='asis'}
+
+# Perform PCA
+pca_result = prcomp(pca_data)
+as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
+
+```
+
+A scree plot allows us to visualize the percent of variation that can be explained by each component (or dimension).This scree plot has multiple elbows, making the test uncertain. However, we will continue regardless. 
+
+```{r pca3_benthicpim, fig.height=5, fig.width=10}
+
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 90, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+
+fviz_eig(pca_result, addlabels = TRUE, barfill = "#56B4E9", barcolor = "black") + theme_classic()+ xy + 
+  xlab(label = "Principal Components") + ylab(label = "Variance Explained")+ggtitle("")
+```
+
+
+
+Now we can investigate the loadings, which are how each Fish contributes to each principal component. The greatest contributors to PC1 are french grunt, bluestriped grunt, and lane snapper. 
+
+```{r pca4_benthicpim, fig.height=4, fig.width=10}
+
+loadings = pca_result$rotation
+loadings_pc1 = loadings[, 1]
+loadings_pc2 = loadings[, 2]
+loadings_df = data.frame(Loading_PC1 = (loadings_pc1),
+                         Loading_PC2 = (loadings_pc2))
+loadings_df = loadings_df %>%
+  mutate(Sign_PC1 = ifelse(Loading_PC1 > 0, "pos", "neg"),
+         Sign_PC2 = ifelse(Loading_PC2 > 0, "pos", "neg"))%>%
+  mutate(Loading_PC1 = format(round(abs(Loading_PC1), 3), nsmall = 3),
+         Loading_PC2 = format(round(abs(Loading_PC2), 3), nsmall = 3)) %>%
+  arrange(desc(Loading_PC1))
+head(select(loadings_df, -c(Loading_PC2, Sign_PC2)))
+
+
+```
+
+The greatest contributors to PC2 are lane snapper, french grunt, and bluestriped grunt. 
+
+```{r pca4_benthicpim, fig.height=4, fig.width=10}
+
+loadings_df = loadings_df %>%
+  arrange(desc(Loading_PC2))
+head(select(loadings_df, -c(Loading_PC1, Sign_PC1)))
+
+
+```
+
+
+Moving forward with the PCA, we can extract the principal component scores for each row of data and add these to our original data set.
+
+```{r pca5_benthicpim, fig.height=4, fig.width=10}
+
+# Extract principal component scores
+pc_scores = as.data.frame(pca_result$x)
+# Add to original datasets
+pca_data_metadata_supplemented = cbind(pca_data_metadata, pc_scores)
+
+```
+
+
+We can now visualize the results of the PCA with a biplot. We see Protocol seem to be spread across the map, with MBRS being lower on PC1.
+
+```{r pca6_benthicpim, fig.height=5, fig.width=10}
+
+#theme
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 0, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+h_line1 = geom_hline(yintercept = c(-8, -4, 0, 4, 8), linetype = "dashed", color = "darkgrey", size = 0.75) 
+h_line2 = geom_hline(yintercept = c(-6, -2, 2, 6), linetype = "dotted", color = "darkgrey", size = 0.5) 
+h_line3 = geom_hline(yintercept = 0, color = "black", size = 1) 
+v_line1 = geom_vline(xintercept = 0, color = "black", size = 1) 
+
+#protocol
+means <- pca_data_metadata_supplemented %>%
+  group_by(Protocol) %>%
+  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
+A = ggplot() +
+    theme_classic() + xy +h_line1 + h_line2 + h_line3+v_line1+
+    stat_ellipse(data = pca_data_metadata_supplemented,
+                 aes(x = PC1, y = PC2, fill = Protocol), level = 0.95, geom = "polygon", alpha = 0.2, color = "black") +
+    geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Protocol), size = 4, shape = 19) + 
+  labs(x = "Principal Component 1", y = "Principal Component 2", title = "A") +
+  scale_fill_manual(values = palette) +
+  scale_color_manual(values = palette) +
+  scale_x_continuous(breaks = seq(-8, 8, by = 2)) +
+  scale_y_continuous(breaks = seq(-8, 8, by = 4)) +
+  coord_cartesian(xlim = c(-8, 8)) 
+
+
+```
+
+And Collector is spread across as well, with collectors varying mostly for PC1. 
+
+
+```{r pca7_benthicpim, fig.height=12, fig.width=6}
+
+# Calculate means for each Collector
+means <- pca_data_metadata_supplemented %>%
+  group_by(Collector) %>%
+  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
+
+B = ggplot() +
+  theme_classic() + 
+  xy + 
+  h_line1 + h_line2 + h_line3 + v_line1 +
+  stat_ellipse(data = pca_data_metadata_supplemented,
+               aes(x = PC1, y = PC2, fill = Collector), level = 0.95, geom = "polygon", alpha = 0.2, color = "black") +
+  geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Collector), size = 4, shape = 19) + 
+  labs(x = "Principal Component 1", y = "Principal Component 2", title = "B") +
+  scale_fill_manual(values = palette) +
+    scale_color_manual(values = palette) +
+  scale_x_continuous(breaks = seq(-8, 8, by = 2)) +
+  scale_y_continuous(breaks = seq(-8, 8, by = 4)) +
+  coord_cartesian(xlim = c(-8, 8)) 
+
+PCA_Plot = ggarrange(A, B, ncol = 2, nrow = 1)
+
+PCA_Plot
+
+```
+
+
+
+
+
+Let's do a Kruskal-Wallis to investigate further. These garner significant p-values.
+
+
+```{r kruskal1_benthicpim, fig.height=4, fig.width=10}
+
+kw_test_pc1_collector = kruskal.test(PC1 ~ Collector, data = pca_data_metadata_supplemented)
+kw_test_pc2_collector = kruskal.test(PC2 ~ Collector, data = pca_data_metadata_supplemented)
+
+
+
+bind_rows(
+  data.frame(Test = "PC1 Collector", p.value = kw_test_pc1_collector$p.value),
+  data.frame(Test = "PC2 Collector", p.value = kw_test_pc2_collector$p.value),
+) %>%
+  mutate(p.value = sprintf("%.2e", p.value))
+
+```
+
+Running a post-hoc Dunn helps us understand specific Collector pairs that differ. Let’s display all Collector pairs that differ significantly. We can show whether these Collectors are from within the same Protocols, or from different Protocols.
+
+
+```{r dunn1_benthicpim, fig.height=4, fig.width=10, include=FALSE}
+
+dunn = dunn.test(pca_data_metadata_supplemented$PC1, 
+                 g = pca_data_metadata_supplemented$Collector, 
+                 method = "bonferroni")
+
+dunn2 = dunn.test(pca_data_metadata_supplemented$PC2, 
+                 g = pca_data_metadata_supplemented$Collector, 
+                 method = "bonferroni")
+
+```
+
+```{r dunn2_benthicpim, eval=FALSE, fig.height=4, fig.width=10}
+
+dunn = dunn.test(pca_data_metadata_supplemented$PC1, 
+                 g = pca_data_metadata_supplemented$Collector, 
+                 method = "bonferroni")
+
+dunn2 = dunn.test(pca_data_metadata_supplemented$PC2, 
+                 g = pca_data_metadata_supplemented$Collector, 
+                 method = "bonferroni")
+
+```
+
+The 5 largest absolute Z values with significant P values are created from collector pairs GAGA-JASA, JASA-ROGO, GAGA-VIAL, GAGA-IVWA, JASA-MOBA. However, there are 15 total significant collector pairs. 
+
+```{r dunn3_benthicpim,  fig.height=4, fig.width=10}
+
+dunn = data.frame(dunn$comparisons, dunn$Z, dunn$P.adjusted)
+dunn2 = data.frame(dunn2$comparisons, dunn2$Z, dunn2$P.adjusted)
+
+dunn_df = filter(dunn, `dunn.P.adjusted` < 0.05) %>% 
+  mutate("P Value" = sprintf("%.2e", (`dunn.P.adjusted`)), 
+         "Pairs" = `dunn.comparisons`, 
+         "Z Value (PC1)" = abs(`dunn.Z`)) %>% 
+  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
+  select(Collector_1, Collector_2,  `Z Value (PC1)`, `P Value`)%>%
+  arrange(desc(`Z Value (PC1)`))
+head(dunn_df, 5)
+
+```
+
+For PC2, the 5 largest absolute Z values with significant P values are created from collector pairs JASA-MOBA, JASA-VIAL, KENO-MOBA, KENO-VIAL, and MOBA-ROGO. However, there are 13 total significantly different collector pairs. 
+
+
+
+```{r dunn4_benthicpim,  fig.height=4, fig.width=10}
+
+dunn_df2 = filter(dunn2, `dunn2.P.adjusted` < 0.05) %>% 
+  mutate("P Value" = sprintf("%.2e", (`dunn2.P.adjusted`)), 
+         "Pairs" = `dunn2.comparisons`, 
+         "Z Value (PC1)" = abs(`dunn2.Z`)) %>% 
+  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
+  select(Collector_1, Collector_2,  `Z Value (PC1)`, `P Value`)%>%
+  arrange(desc(`Z Value (PC1)`))
+head(dunn_df2, 5)
+
+```
+
+
+
+#### Fish Presence/Absence
+
+A question that arises is whether these differences are due to differences in fish species observed, or abundance of fish. We can investigate that by adjusting our Observations to be either 0 (fish not found), or 1 (fish found at least once) for each fish species at each Uniq_Transect. We can then perform the PCA as before. We see PC1 explains a lot less variation than before, now. Only 11%, with the first two PCs only explaining 19.5% of the variation. That is compared to 60.8% for the previous PCA!
+
+```{r collector_bias14.f, echo = FALSE, fig.height=4, fig.width=10}
+
+
+#Use filtered_data to make pca data. Format as wide data. Total fish from size classes to single sum. Observations >0 assigned 1.
+pca_data <- filtered_data %>%
+  select(Uniq_Transect, Collector, Protocol, Fish, Observations) %>%
+  group_by(Uniq_Transect, Collector, Protocol, Fish) %>%
+  summarize(Observations = sum(Observations)) %>%
+  mutate(
+    Observations = ifelse(Observations >= 1, 1, 0)
+  ) %>%
+  pivot_wider(names_from = Fish, values_from = Observations, values_fill = 0) %>%
+  ungroup()
+
+#Preserve detailed version as metadata
+pca_data_metadata = pca_data
+rownames_pca = pca_data$Uniq_Transect
+pca_data = select(pca_data,-c("Protocol", "Uniq_Transect", "Collector"))
+rownames(pca_data) = rownames_pca
+
+
+
+
+```
+
+
+
+Next, we can perform the PCA. Let's view a summary of the first 2 principal components. We see here that the first 2 components cumulatively explain a proportion of only 0.166 (or 16.6%) of variation in the total data.
+
+```{r collector_bias4, fig.height=4, fig.width=10, results='asis'}
+
+# Perform PCA
+pca_result = prcomp(pca_data)
+as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
+
+```
+
+A scree plot allows us to visualize the percent of variation that can be explained by each component (or dimension).
+
+```{r pca3_benthicpim, fig.height=5, fig.width=10}
+
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 90, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+
+fviz_eig(pca_result, addlabels = TRUE, barfill = "#56B4E9", barcolor = "black") + theme_classic()+ xy + 
+  xlab(label = "Principal Components") + ylab(label = "Variance Explained")+ggtitle("")
+```
+
+
+
+Now we can investigate the loadings, which are how each Fish contributes to each principal component. The greatest contributors to PC1 are stoplight parrotfish, french grunt, and blue tang surgeonfish.
+
+```{r pca4_benthicpim, fig.height=4, fig.width=10}
+
+loadings = pca_result$rotation
+loadings_pc1 = loadings[, 1]
+loadings_pc2 = loadings[, 2]
+loadings_df = data.frame(Loading_PC1 = (loadings_pc1),
+                         Loading_PC2 = (loadings_pc2))
+loadings_df = loadings_df %>%
+  mutate(Sign_PC1 = ifelse(Loading_PC1 > 0, "pos", "neg"),
+         Sign_PC2 = ifelse(Loading_PC2 > 0, "pos", "neg"))%>%
+  mutate(Loading_PC1 = format(round(abs(Loading_PC1), 3), nsmall = 3),
+         Loading_PC2 = format(round(abs(Loading_PC2), 3), nsmall = 3)) %>%
+  arrange(desc(Loading_PC1))
+head(select(loadings_df, -c(Loading_PC2, Sign_PC2)))
+
+
+```
+
+The greatest contributors to PC2 are ocean surgeonfish, foureye butterflyfish, and schoolmaster snapper. 
+
+```{r pca4_benthicpim, fig.height=4, fig.width=10}
+
+loadings_df = loadings_df %>%
+  arrange(desc(Loading_PC2))
+head(select(loadings_df, -c(Loading_PC1, Sign_PC1)))
+
+
+```
+
+
+Moving forward with the PCA, we can extract the principal component scores for each row of data and add these to our original data set.
+
+```{r pca5_benthicpim, fig.height=4, fig.width=10}
+
+# Extract principal component scores
+pc_scores = as.data.frame(pca_result$x)
+# Add to original datasets
+pca_data_metadata_supplemented = cbind(pca_data_metadata, pc_scores)
+
+```
+
+
+We can now visualize the results of the PCA with a biplot. We see Protocol seems to be near identical.
+
+```{r pca6_benthicpim, fig.height=5, fig.width=10}
+
+#theme
+xy =   theme(legend.position = "top", axis.text.x = element_text(angle = 0, face = "bold", size = 12, 
+                                                            vjust = 0.5, hjust = 1),
+        legend.text = element_text(size = 12),  
+        legend.title = element_text(size = 14),
+        title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank())
+h_line1 = geom_hline(yintercept = c(-2, -1, 0, 1, 2), linetype = "dashed", color = "darkgrey", size = 0.75) 
+h_line2 = geom_hline(yintercept = c(-1.5, -0.5, 0.5, 1.5), linetype = "dotted", color = "darkgrey", size = 0.5) 
+h_line3 = geom_hline(yintercept = 0, color = "black", size = 1) 
+v_line1 = geom_vline(xintercept = 0, color = "black", size = 1) 
+
+#protocol
+means <- pca_data_metadata_supplemented %>%
+  group_by(Protocol) %>%
+  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
+C = ggplot() +
+    theme_classic() + xy +h_line1 + h_line2 + h_line3+v_line1+
+    stat_ellipse(data = pca_data_metadata_supplemented,
+                 aes(x = PC1, y = PC2, fill = Protocol), level = 0.95, geom = "polygon", alpha = 0.2, color = "black") +
+    geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Protocol), size = 4, shape = 19) + 
+  labs(x = "Principal Component 1", y = "Principal Component 2", title = "C") +
+  scale_fill_manual(values = palette) +
+  scale_color_manual(values = palette) +
+  scale_x_continuous(breaks = seq(-2, 2, by = 0.5)) +
+  scale_y_continuous(breaks = seq(-2, 2, by = 0.5)) +
+  coord_cartesian(xlim = c(-2, 2)) 
+
+
+```
+
+And Collector is spread across as well, with collectors varying mostly for PC1. 
+
+
+```{r pca7_benthicpim, fig.height=13, fig.width=12}
+
+# Calculate means for each Collector
+means <- pca_data_metadata_supplemented %>%
+  group_by(Collector) %>%
+  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
+
+D = ggplot() +
+  theme_classic() + 
+  xy + 
+  h_line1 + h_line2 + h_line3 + v_line1 +
+  stat_ellipse(data = pca_data_metadata_supplemented,
+               aes(x = PC1, y = PC2, fill = Collector), level = 0.95, geom = "polygon", alpha = 0.2, color = "black") +
+  geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Collector), size = 4, shape = 19) + 
+  labs(x = "Principal Component 1", y = "Principal Component 2", title = "D") +
+  scale_fill_manual(values = palette) +
+    scale_color_manual(values = palette)+
+  scale_x_continuous(breaks = seq(-2, 2, by = 0.5)) +
+  scale_y_continuous(breaks = seq(-2, 2, by = 0.5)) +
+  coord_cartesian(xlim = c(-2, 2)) 
+
+PCA_Plot = ggarrange(A, B, C, D, ncol = 2, nrow = 2)
+
+#ggsave("fig6_fishpca.png", plot = PCA_Plot, width = 12, height = 13, units = "in", dpi = 800)
+PCA_Plot
+
+```
+
+
+
+
+
+Let's do a Kruskal-Wallis to investigate further. These garner significant p-values.
+
+
+```{r kruskal1_benthicpim, fig.height=4, fig.width=10}
+
+kw_test_pc1_collector = kruskal.test(PC1 ~ Collector, data = pca_data_metadata_supplemented)
+kw_test_pc2_collector = kruskal.test(PC2 ~ Collector, data = pca_data_metadata_supplemented)
+
+
+
+bind_rows(
+  data.frame(Test = "PC1 Collector", p.value = kw_test_pc1_collector$p.value),
+  data.frame(Test = "PC2 Collector", p.value = kw_test_pc2_collector$p.value),
+) %>%
+  mutate(p.value = sprintf("%.2e", p.value))
+
+```
+
+Running a post-hoc Dunn helps us understand specific Collector pairs that differ. Let’s display all Collector pairs that differ significantly. We can show whether these Collectors are from within the same Protocols, or from different Protocols.
+
+
+```{r dunn1_benthicpim, fig.height=4, fig.width=10, include=FALSE}
+
+dunn = dunn.test(pca_data_metadata_supplemented$PC1, 
+                 g = pca_data_metadata_supplemented$Collector, 
+                 method = "bonferroni")
+
+dunn2 = dunn.test(pca_data_metadata_supplemented$PC2, 
+                 g = pca_data_metadata_supplemented$Collector, 
+                 method = "bonferroni")
+
+```
+
+```{r dunn2_benthicpim, eval=FALSE, fig.height=4, fig.width=10}
+
+dunn = dunn.test(pca_data_metadata_supplemented$PC1, 
+                 g = pca_data_metadata_supplemented$Collector, 
+                 method = "bonferroni")
+
+dunn2 = dunn.test(pca_data_metadata_supplemented$PC2, 
+                 g = pca_data_metadata_supplemented$Collector, 
+                 method = "bonferroni")
+
+```
+
+The 5 largest absolute Z values with significant P values are created from collector pairs GAGA-JASA, JASA-ROGO, GAGA-VIAL, GAGA-IVWA, JASA-MOBA. However, there are 15 total significant collector pairs. 
+
+```{r dunn3_benthicpim,  fig.height=4, fig.width=10}
+
+dunn = data.frame(dunn$comparisons, dunn$Z, dunn$P.adjusted)
+dunn2 = data.frame(dunn2$comparisons, dunn2$Z, dunn2$P.adjusted)
+
+dunn_df = filter(dunn, `dunn.P.adjusted` < 0.05) %>% 
+  mutate("P Value" = sprintf("%.2e", (`dunn.P.adjusted`)), 
+         "Pairs" = `dunn.comparisons`, 
+         "Z Value (PC1)" = abs(`dunn.Z`)) %>% 
+  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
+  select(Collector_1, Collector_2,  `Z Value (PC1)`, `P Value`)%>%
+  arrange(desc(`Z Value (PC1)`))
+head(dunn_df, 5)
+
+```
+
+For PC2, the 5 largest absolute Z values with significant P values are created from collector pairs JASA-MOBA, JASA-VIAL, KENO-MOBA, KENO-VIAL, and MOBA-ROGO. However, there are 13 total significantly different collector pairs. 
+
+
+
+```{r dunn4_benthicpim,  fig.height=4, fig.width=10}
+
+dunn_df2 = filter(dunn2, `dunn2.P.adjusted` < 0.05) %>% 
+  mutate("P Value" = sprintf("%.2e", (`dunn2.P.adjusted`)), 
+         "Pairs" = `dunn2.comparisons`, 
+         "Z Value (PC2)" = abs(`dunn2.Z`)) %>% 
+  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
+  select(Collector_1, Collector_2,  `Z Value (PC2)`, `P Value`)%>%
+  arrange(desc(`Z Value (PC2)`))
+head(dunn_df2, 5)
+
+```
+
