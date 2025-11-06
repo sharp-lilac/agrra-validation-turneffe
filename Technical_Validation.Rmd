@@ -309,10 +309,11 @@ ggsave("fig_collector_bias.png", fig_collector_bias, width = 14, height = 8, dpi
 Let's prepare our data for a PCA. We will use Bucket system 2. 
 
 
-```{r pca1_benthicpim, fig.height=10, fig.width=10}
-# Use summary_data3_collector2 to make pca data. Format as wide data.
-pca_data <- summary_data3_collector2 %>%
-  select(Uniq_Transect, Collector, Protocol, Bucket2, Percent_of_Transect) %>%
+```{r pca_data, fig.height=10, fig.width=10}
+# Format data for PCA ---------------------------------------------------------------
+pca_data <- summary_data_collector_codes %>%
+  select(Year, Site, Transect, Collector, Protocol, Bucket2, Percent_of_Transect) %>%
+  mutate(Uniq_Transect = paste(Year, Site, Transect)) %>%
   pivot_wider(names_from = Bucket2, values_from = Percent_of_Transect, values_fill = 0) %>%
   ungroup()
 duplicated_transects <- pca_data %>%
@@ -321,19 +322,17 @@ duplicated_transects <- pca_data %>%
   pull(Uniq_Transect)
 pca_data <- pca_data %>%
   filter(!Uniq_Transect %in% duplicated_transects)
-# Preserve detailed version as metadata
 pca_data_metadata <- pca_data
 rownames_pca <- pca_data$Uniq_Transect
-pca_data <- select(pca_data, -c("Protocol", "Uniq_Transect", "Collector"))
+pca_data <- select(pca_data, -c("Protocol", "Year", "Site", "Transect", "Collector", "Uniq_Transect"))
 rownames(pca_data) <- rownames_pca
 ```
 
 
+Next, we can perform the PCA. Let's view a summary of the first 2 principal components. 
 
-Next, we can perform the PCA. Let's view a summary of the first 2 principal components. We see here that the first 2 components cumulatively explain a proportion of 0.845 (or 84.5%) of variation in the total data.
-
-```{r pca2_benthicpim, fig.height=4, fig.width=10, results='asis'}
-# Perform PCA
+```{r pca_calculation, fig.height=4, fig.width=10, results='asis'}
+# Perform PCA ---------------------------------------------------------------
 pca_result <- prcomp(pca_data)
 as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
 ```
@@ -341,31 +340,19 @@ as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
 
 A scree plot allows us to visualize the percent of variation that can be explained by each component (or dimension).
 
-```{r pca3_benthicpim, fig.height=5, fig.width=10}
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 90, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-
-fviz_eig(pca_result, addlabels = TRUE, barfill = "#56B4E9", barcolor = "black") + theme_classic() + xy +
-  geom_segment(aes(x = 3, xend = 3, y = 9.7, yend = 28.5), linetype = "dashed", color = "black") +
-  annotate("text",
-    x = 3, y = 30,
-    label = "Elbow", hjust = 0.47, vjust = 0, color = "black", size = 4
-  ) +
+```{r pca_scree, fig.height=5, fig.width=10}
+# Create Scree ---------------------------------------------------------------
+fviz_eig(pca_result, addlabels = TRUE, barfill = "grey", barcolor = "black") +
+  theme_pubclean() +
   xlab(label = "Principal Components") + ylab(label = "Variance Explained") + ggtitle("")
 ```
 
 
 
-Now we can investigate the loadings, which are how each Bucket contributes to each principal component. The greatest contributors to PC1 are solely DYNSUB, and MA. PC2 is driven by TA_SUB and MA. PC1 and PC2 are driven by MA in the opposite way. 
+Now we can investigate the loadings, which are how each Bucket contributes to each principal component. 
 
-```{r pca4_benthicpim, fig.height=4, fig.width=10}
+```{r pca_loadings, fig.height=4, fig.width=10}
+# Investigate loadings ---------------------------------------------------------------
 loadings <- pca_result$rotation
 loadings_pc1 <- loadings[, 1]
 loadings_pc2 <- loadings[, 2]
@@ -383,46 +370,21 @@ head(loadings_df)
 
 
 
-Moving forward with the PCA, we can extract the principal component scores for each row of data and add these to our original data set.
+Moving forward with the PCA, we can extract the principal component scores for each row of data and 
+add these to our original data set. 
+We can now visualize the results of the PCA with biplots.
 
-```{r pca5_benthicpim, fig.height=4, fig.width=10}
-# Extract principal component scores
+```{r pca_biplot, fig.height=5, fig.width=10}
+# Extract PCA scores ---------------------------------------------------------------
 pc_scores <- as.data.frame(pca_result$x)
-# Add to original datasets
 pca_data_metadata_supplemented <- cbind(pca_data_metadata, pc_scores)
-```
 
-------------------------------------------------------------------------
-
-We can now visualize the results of the PCA with a biplot. We see Protocol seem to be spread across the map, with MBRS being lower on PC2 and AGRRA a little high on PC1. 
-
-```{r pca6_benthicpim, fig.height=5, fig.width=10}
-# theme
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 0, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-h_line1 <- geom_hline(yintercept = c(-60, -30, 0, 30, 60), linetype = "dashed", color = "darkgrey", size = 0.75)
-h_line2 <- geom_hline(yintercept = c(-45, -15, 15, 45), linetype = "dotted", color = "darkgrey", size = 0.5)
-h_line3 <- geom_hline(yintercept = 0, color = "black", size = 1)
-v_line1 <- geom_vline(xintercept = 0, color = "black", size = 1)
-
-# protocol
+# Create biplots ---------------------------------------------------------------
 means <- pca_data_metadata_supplemented %>%
   group_by(Protocol) %>%
   summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
 A <- ggplot() +
-  theme_classic() +
-  xy +
-  h_line1 +
-  h_line2 +
-  h_line3 +
-  v_line1 +
+  theme_pubclean() +
   stat_ellipse(
     data = pca_data_metadata_supplemented,
     aes(x = PC1, y = PC2, fill = Protocol), level = 0.95, geom = "polygon", alpha = 0.2, color = "black"
@@ -433,9 +395,29 @@ A <- ggplot() +
   scale_color_manual(values = palette) +
   scale_x_continuous(breaks = seq(-80, 80, by = 20)) +
   coord_cartesian(xlim = c(-80, 80))
+means2 <- pca_data_metadata_supplemented %>%
+  inner_join(collectors_3percent, by = c("Protocol", "Collector")) %>%
+  group_by(Collector, Protocol) %>%
+  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
+pca_data_metadata_supplemented_filtered <- pca_data_metadata_supplemented %>%
+  inner_join(collectors_3percent, by = c("Protocol", "Collector"))
+B <- ggplot() +
+  theme_pubclean() +
+  stat_ellipse(
+    data = pca_data_metadata_supplemented_filtered,
+    aes(x = PC1, y = PC2, fill = Collector), level = 0.95, geom = "polygon", alpha = 0.2, color = "black"
+  ) +
+  geom_point(data = means2, aes(x = mean_PC1, y = mean_PC2, color = Collector), size = 4, shape = 19) +
+  labs(x = "Principal Component 1", y = "Principal Component 2", title = "B") +
+  scale_fill_manual(values = palette[-(1:2)]) +
+  scale_color_manual(values = palette[-(1:2)]) +
+  scale_x_continuous(breaks = seq(-80, 80, by = 20)) +
+  coord_cartesian(xlim = c(-80, 80)) +
+  facet_wrap(~Protocol)
+fig_biplot <- ggarrange(A, B, nrow = 2)
+ggsave("fig_biplot.png", fig_biplot, width = 8, height = 10, dpi = 300)
 ```
 
-And Collector is spread across as well.
 
 
 ```{r pca7_benthicpim, fig.height=11, fig.width=10}
