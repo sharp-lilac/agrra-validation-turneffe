@@ -37,6 +37,8 @@ library(glmmTMB) # GLMM
 library(car) # Anova
 library(kableExtra) # Customize tables
 library(iNEXT) # Rarefaction
+library(vegan) # Hellinger transformation
+library(lme4) # Calculate residuals for pca
 
 # Define theme ---------------------------------------------------------------
 palette <- c(
@@ -333,20 +335,23 @@ Next, we can perform the PCA. Let's view a summary of the first 2 principal comp
 
 ```{r pca_calculation, fig.height=4, fig.width=10, results='asis'}
 # Perform PCA ---------------------------------------------------------------
-pca_result <- prcomp(pca_data)
+pca_data_hellinger <- decostand(pca_data, method = "hellinger")
+# pca_result <- prcomp(pca_data_hellinger, center = TRUE, scale. = FALSE)
+# as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
+
+# Extract residuals with LMM per bucket ---------------------------------------------------------------
+bucket_cols <- setdiff(names(pca_data_hellinger), c("Year", "Site", "Collector", "Protocol"))
+residuals_matrix <- sapply(bucket_cols, function(bucket) {
+  mod <- lmer(as.formula(paste(bucket, "~ 1 + (1|Site)")),
+    data = cbind(pca_data_metadata, pca_data_hellinger)
+  )
+  resid(mod)
+})
+
+# Perform PCA on residuals ---------------------------------------------------------------
+pca_result <- prcomp(residuals_matrix, center = TRUE, scale. = FALSE)
 as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
 ```
-
-
-A scree plot allows us to visualize the percent of variation that can be explained by each component (or dimension).
-
-```{r pca_scree, fig.height=5, fig.width=10}
-# Create Scree ---------------------------------------------------------------
-fviz_eig(pca_result, addlabels = TRUE, barfill = "grey", barcolor = "black") +
-  theme_pubclean() +
-  xlab(label = "Principal Components") + ylab(label = "Variance Explained") + ggtitle("")
-```
-
 
 
 Now we can investigate the loadings, which are how each Bucket contributes to each principal component. 
@@ -367,7 +372,6 @@ loadings_df <- loadings_df %>%
   )
 loadings_df
 ```
-
 
 
 Moving forward with the PCA, we can extract the principal component scores for each row of data and 
@@ -392,9 +396,7 @@ A <- ggplot() +
   geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Protocol), size = 4, shape = 19) +
   labs(x = "Principal Component 1", y = "Principal Component 2", title = "A") +
   scale_fill_manual(values = palette) +
-  scale_color_manual(values = palette) +
-  scale_x_continuous(breaks = seq(-80, 80, by = 20)) +
-  coord_cartesian(xlim = c(-80, 80))
+  scale_color_manual(values = palette)
 means2 <- pca_data_metadata_supplemented %>%
   inner_join(collectors_3percent, by = c("Protocol", "Collector")) %>%
   group_by(Collector, Protocol) %>%
@@ -411,72 +413,23 @@ B <- ggplot() +
   labs(x = "Principal Component 1", y = "Principal Component 2", title = "B") +
   scale_fill_manual(values = palette[-(1:2)]) +
   scale_color_manual(values = palette[-(1:2)]) +
-  scale_x_continuous(breaks = seq(-80, 80, by = 20)) +
-  coord_cartesian(xlim = c(-80, 80)) +
   facet_wrap(~Protocol)
 fig_biplot <- ggarrange(A, B, nrow = 2)
 ggsave("fig_biplot.png", fig_biplot, width = 8, height = 10, dpi = 300)
 ```
 
 
-Let's do a Kruskal-Wallis to investigate further. 
+Let's do a PERMANOVA to investigate further. 
 
-
-```{r kruskal, fig.height=4, fig.width=10}
-# Conduct Kruskal-Wallis ---------------------------------------------------------------
-kw_test_pc1_collector <- kruskal.test(PC1 ~ Collector, data = pca_data_metadata_supplemented)
-kw_test_pc2_collector <- kruskal.test(PC2 ~ Collector, data = pca_data_metadata_supplemented)
-bind_rows(
-  data.frame(Test = "PC1 Collector", p.value = kw_test_pc1_collector$p.value),
-  data.frame(Test = "PC2 Collector", p.value = kw_test_pc2_collector$p.value),
-) %>%
-  mutate(p.value = sprintf("%.2e", p.value))
-```
-
-Running a post-hoc Dunn helps us understand specific Collector pairs that differ. 
-Let’s display all Collector pairs that differ significantly. 
-We can show whether these Collectors are from within the same Protocols, 
-or from different Protocols.
-
-
-```{r dunn, fig.height=4, fig.width=10, include=FALSE}
-# Conduct Dunn test ---------------------------------------------------------------
-dunn <- dunn.test(pca_data_metadata_supplemented_filtered$PC1,
-  g = pca_data_metadata_supplemented_filtered$Collector,
-  method = "bonferroni"
+```{r permanova, fig.height=4, fig.width=10}
+# Conduct PERMANOVA ---------------------------------------------------------------
+dist_matrix <- dist(residuals_matrix, method = "euclidean")
+adonis_res <- adonis2(
+  dist_matrix ~ Collector + Protocol,
+  data = pca_data_metadata_supplemented_filtered,
+  permutations = how(blocks = pca_data_metadata_supplemented_filtered$Site)
 )
-dunn2 <- dunn.test(pca_data_metadata_supplemented_filtered$PC2,
-  g = pca_data_metadata_supplemented_filtered$Collector,
-  method = "bonferroni"
-)
-```
-
-
-```{r dunn_comparisons,  fig.height=4, fig.width=10}
-# Run Dunn comparisons ---------------------------------------------------------------
-dunn <- data.frame(dunn$comparisons, dunn$Z, dunn$P.adjusted)
-dunn_df <- filter(dunn, `dunn.P.adjusted` < 0.05) %>%
-  mutate(
-    "P Value" = sprintf("%.2e", (`dunn.P.adjusted`)),
-    "Pairs" = `dunn.comparisons`,
-    "Z Value (PC1)" = abs(`dunn.Z`)
-  ) %>%
-  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
-  select(Collector_1, Collector_2, `Z Value (PC1)`, `P Value`) %>%
-  arrange(desc(`Z Value (PC1)`))
-head(dunn_df, 5)
-
-dunn2 <- data.frame(dunn2$comparisons, dunn2$Z, dunn2$P.adjusted)
-dunn2_df <- filter(dunn2, `dunn2.P.adjusted` < 0.05) %>%
-  mutate(
-    "P Value" = sprintf("%.2e", (`dunn2.P.adjusted`)),
-    "Pairs" = `dunn2.comparisons`,
-    "Z Value (PC1)" = abs(`dunn2.Z`)
-  ) %>%
-  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
-  select(Collector_1, Collector_2, `Z Value (PC1)`, `P Value`) %>%
-  arrange(desc(`Z Value (PC1)`))
-head(dunn2_df, 5)
+adonis_res
 ```
 
 
