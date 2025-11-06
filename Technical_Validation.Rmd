@@ -423,9 +423,9 @@ Let's do a Kruskal-Wallis to investigate further.
 
 
 ```{r kruskal, fig.height=4, fig.width=10}
+# Conduct Kruskal-Wallis ---------------------------------------------------------------
 kw_test_pc1_collector <- kruskal.test(PC1 ~ Collector, data = pca_data_metadata_supplemented)
 kw_test_pc2_collector <- kruskal.test(PC2 ~ Collector, data = pca_data_metadata_supplemented)
-
 bind_rows(
   data.frame(Test = "PC1 Collector", p.value = kw_test_pc1_collector$p.value),
   data.frame(Test = "PC2 Collector", p.value = kw_test_pc2_collector$p.value),
@@ -433,38 +433,28 @@ bind_rows(
   mutate(p.value = sprintf("%.2e", p.value))
 ```
 
-Running a post-hoc Dunn helps us understand specific Collector pairs that differ. Let’s display all Collector pairs that differ significantly. We can show whether these Collectors are from within the same Protocols, or from different Protocols.
+Running a post-hoc Dunn helps us understand specific Collector pairs that differ. 
+Let’s display all Collector pairs that differ significantly. 
+We can show whether these Collectors are from within the same Protocols, 
+or from different Protocols.
 
 
-```{r dunn1_benthicpim, fig.height=4, fig.width=10, include=FALSE}
-dunn <- dunn.test(filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$PC1,
-  g = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$Collector,
+```{r dunn, fig.height=4, fig.width=10, include=FALSE}
+# Conduct Dunn test ---------------------------------------------------------------
+dunn <- dunn.test(pca_data_metadata_supplemented_filtered$PC1,
+  g = pca_data_metadata_supplemented_filtered$Collector,
   method = "bonferroni"
 )
-
-dunn2 <- dunn.test(filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$PC2,
-  g = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$Collector,
-  method = "bonferroni"
-)
-```
-
-```{r dunn2_benthicpim, eval=FALSE, fig.height=4, fig.width=10}
-dunn <- dunn.test(filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$PC1,
-  g = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$Collector,
-  method = "bonferroni"
-)
-
-dunn2 <- dunn.test(filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$PC2,
-  g = filter(pca_data_metadata_supplemented, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))$Collector,
+dunn2 <- dunn.test(pca_data_metadata_supplemented_filtered$PC2,
+  g = pca_data_metadata_supplemented_filtered$Collector,
   method = "bonferroni"
 )
 ```
-As suspected earlier, it is the specific differences of individuals in MBRS SMP years driving the differences. Of the 9 collector pairs that differ for PC1, TABA is involved in 6, and CECA is involved in 4. The 5 significant collector pairs with highest Z-values all incude TABA. 
 
-```{r dunn3_benthicpim,  fig.height=4, fig.width=10}
+
+```{r dunn_comparisons,  fig.height=4, fig.width=10}
+# Run Dunn comparisons ---------------------------------------------------------------
 dunn <- data.frame(dunn$comparisons, dunn$Z, dunn$P.adjusted)
-dunn2 <- data.frame(dunn2$comparisons, dunn2$Z, dunn2$P.adjusted)
-
 dunn_df <- filter(dunn, `dunn.P.adjusted` < 0.05) %>%
   mutate(
     "P Value" = sprintf("%.2e", (`dunn.P.adjusted`)),
@@ -475,14 +465,9 @@ dunn_df <- filter(dunn, `dunn.P.adjusted` < 0.05) %>%
   select(Collector_1, Collector_2, `Z Value (PC1)`, `P Value`) %>%
   arrange(desc(`Z Value (PC1)`))
 head(dunn_df, 5)
-```
 
-
-
-Similarly, for PC2, BOYO drives the difference, being present in 5 of the 10 differences. However, of the 5 highest significant Z values, she is only present in 2 of the pairs. 
-
-```{r dunn4_benthicpim,  fig.height=4, fig.width=10}
-dunn_df2 <- filter(dunn2, `dunn2.P.adjusted` < 0.05) %>%
+dunn2 <- data.frame(dunn2$comparisons, dunn2$Z, dunn2$P.adjusted)
+dunn2_df <- filter(dunn2, `dunn2.P.adjusted` < 0.05) %>%
   mutate(
     "P Value" = sprintf("%.2e", (`dunn2.P.adjusted`)),
     "Pairs" = `dunn2.comparisons`,
@@ -491,7 +476,7 @@ dunn_df2 <- filter(dunn2, `dunn2.P.adjusted` < 0.05) %>%
   separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
   select(Collector_1, Collector_2, `Z Value (PC1)`, `P Value`) %>%
   arrange(desc(`Z Value (PC1)`))
-head(dunn_df2, 5)
+head(dunn2_df, 5)
 ```
 
 
