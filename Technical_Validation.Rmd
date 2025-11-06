@@ -161,18 +161,18 @@ Collectors above the line contribute to more than 3% of the data.
 
 ```{r fig_contributions, fig.height=3, fig.width=10}
 # Visualize collector contributions ---------------------------------------------------------------
-summary_data <- collector_data %>%
+summary_data_contributions <- collector_data %>%
   group_by(Protocol, Collector) %>%
   summarise(Count = n(), .groups = "drop") %>%
   group_by(Protocol) %>%
   mutate(Percentage = Count / sum(Count) * 100) %>%
   ungroup()
-collector_order <- summary_data %>%
+collector_order <- summary_data_contributions %>%
   group_by(Collector) %>%
   summarise(Total = sum(Count)) %>%
   arrange(desc(Total)) %>%
   pull(Collector)
-fig_contributions <- ggplot(summary_data, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
+fig_contributions <- ggplot(summary_data_contributions, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
   geom_col(width = 0.6, color = "black", position = "dodge") +
   theme_classic() +
   labs(x = "Collector", y = "Percent of Data") +
@@ -278,94 +278,30 @@ ggsave("fig_codes.png", fig_codes, width = 12, height = 9, dpi = 300)
 ### Collector Bias
 
 
-We can also make a boxplot of percent observations of each code bucket type separated by collector. This is using bucket system 2, and filtering only collectors that contributed more than 3% of total data. A shows AGRRA collectors and B shows MBRS collectors.
+We can also make a boxplot of percent observations of each code bucket type separated by collector. 
+This is using bucket system 2, and filtering only collectors that contributed more than 10% of total data for a protocol. 
 
-```{r organismcodebuckets3_benthicpim, fig.height=10, fig.width=12}
-# Create summary data for bucket system 2 by unique transect for specific collectors
-summary_data3_collector2 <- collector_data %>%
+```{r fig_collector_bias, fig.height=10, fig.width=12}
+# Create summary datasets ---------------------------------------------------------------
+collectors_3percent <- filter(summary_data_contributions, Percentage > 10)
+summary_data_collector_codes <- collector_data %>%
   left_join(organism_data %>% select(Organism, Bucket2), by = "Organism") %>%
-  arrange(Organism, Bucket2) %>%
-  group_by(Bucket2, Collector, Protocol, Uniq_Transect) %>%
+  inner_join(collectors_3percent, by = c("Protocol", "Collector")) %>%
+  group_by(Bucket2, Collector, Protocol, Year, Site, Transect) %>%
   summarise(Count = n()) %>%
+  left_join(transect_counts, by = c("Year", "Site", "Transect")) %>%
   na.omit() %>%
-  left_join(transect_counts, by = "Uniq_Transect") %>%
-  na.omit() %>%
-  mutate(
-    Percent_of_Transect = (Count / Observations * 100)
-  ) %>%
-  arrange(Percent_of_Transect) %>%
-  filter(Bucket2 != "MISSING" & Bucket2 != "MANI" & Bucket2 != "MUSS")
+  mutate(Percent_of_Transect = (Count / Observations * 100))
 
-# Determine order of benthic codes/classifications so specific groups may be easily plotted
-code_order2_collector2 <- unique(summary_data3_collector2$Bucket2)
-
-# Plot theme
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 90, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-h_line1 <- geom_hline(yintercept = c(25, 50, 75, 100), linetype = "dashed", color = "darkgrey", size = 0.75)
-h_line2 <- geom_hline(yintercept = c(12.5, 37.5, 62.5, 87.5), linetype = "dotted", color = "darkgrey", size = 0.5)
-
-# AGRRA plot
-summary_data3_collector2_agrra <- filter(summary_data3_collector2, Protocol == "AGRRA" & Collector != "ANLI")
-A <- ggplot(
-  filter(summary_data3_collector2_agrra, Bucket2 %in% tail(code_order2, 8)),
-  aes(
-    x = factor(Bucket2, levels = tail(code_order2, 8)),
-    y = Percent_of_Transect, fill = Collector
-  )
-) +
-  h_line1 +
-  h_line2 +
-  geom_boxplot(color = "black", width = 1) +
-  theme_classic() +
-  labs(x = "", y = "", title = "A") +
-  scale_fill_manual(values = palette[c(1, 5, 6)], name = "Collector") +
-  xy +
-  coord_cartesian(ylim = c(0, 100)) +
-  facet_wrap(~Collector) +
-  theme(strip.text = element_blank(), strip.background = element_blank()) +
-  theme(legend.position = "none")
-# MBRS plot
-summary_data3_collector2_mbrs <- filter(summary_data3_collector2, Protocol == "MBRS" & Collector %in% c("CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA"))
-B <- ggplot(
-  filter(summary_data3_collector2_mbrs, Bucket2 %in% tail(code_order2, 8)),
-  aes(
-    x = factor(Bucket2, levels = tail(code_order2, 8)),
-    y = Percent_of_Transect, fill = Collector
-  )
-) +
-  h_line1 +
-  h_line2 +
-  geom_boxplot(color = "black", width = 1) +
-  theme_classic() +
-  labs(x = "", y = "", title = "B") +
-  scale_fill_manual(values = palette[c(2, 3, 4, 5, 6, 7, 8)], name = "Collector") +
-  xy +
-  coord_cartesian(ylim = c(0, 100)) +
-  facet_wrap(~Collector) +
-  theme(strip.text = element_blank(), strip.background = element_blank()) +
-  theme(legend.position = "none")
-# Plot legend
-legend_plot <- ggplot(
-  filter(summary_data3_collector2, Collector %in% c("BOYO", "CECA", "EDBA", "JASA", "KENO", "NIMA", "TABA")),
-  aes(x = 1, y = 1, fill = Collector)
-) +
-  geom_bar(stat = "identity", color = "black") +
+# Plot bucket2 by collector code ---------------------------------------------------------------
+fig_collector_bias <- ggplot(summary_data_collector_codes, aes(x = Bucket2, y = Percent_of_Transect, fill = Collector)) +
+  geom_boxplot(color = "black", width = 0.8) +
+  theme_pubclean() +
+  labs(x = "Bucket Name", y = "Percent of Transect", title = "") +
   scale_fill_manual(values = palette) +
-  theme_void() +
-  theme(legend.position = "top") +
-  guides(fill = guide_legend(title = "Collector"))
-
-CollectorCode_Plot <- ggarrange(legend_plot, A, B, ncol = 1, nrow = 3, heights = c(0.155, 1, 1.65))
-# ggsave("fig4_collectorcodes.png", plot = CollectorCode_Plot, width = 12, height = 10, units = "in", dpi = 800)
-CollectorCode_Plot
+  coord_cartesian(ylim = c(0, 100)) +
+  facet_wrap(~Protocol, nrow = 2)
+ggsave("fig_collector_bias.png", fig_collector_bias, width = 14, height = 8, dpi = 300)
 ```
 
 ### Principal Components Analysis
