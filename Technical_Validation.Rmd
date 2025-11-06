@@ -43,15 +43,7 @@ palette <- c(
   "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#CC79A7", "#9999FF", "#33A02C", "#FB9A99",
   "#990066", "#9933FF", "#999933", "#FFCCFF", "#336600", "#999999", "#990000"
 )
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 0, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
+options(scipen = 999)
 
 # Download and load data ---------------------------------------------------------------
 files <- dryad_download("10.5061/dryad.c866t1gcn")
@@ -80,7 +72,7 @@ We can create a rarefaction curve of total coral species expected to be found by
 Each sampled site is plotted as a line, with localities being labelled, and reef types being indicated by color 
 (yellow being backreef, blue being deep forereef, and green being shallow forereef). 
 
-```{r rarespecies_benthicpim, fig.height=7, fig.width=12}
+```{r fig_rarefaction, fig.height=7, fig.width=12}
 # Filter data ---------------------------------------------------------------
 master_data_species <- master_data %>%
   inner_join(x = master_data, y = organism_data, by = "Organism") %>%
@@ -146,6 +138,7 @@ fig_rarefaction <- ggplot() +
   facet_wrap(~Type, nrow = 1) +
   scale_x_continuous(breaks = seq(0, 3000, by = 500)) +
   scale_y_continuous(breaks = seq(0, 60, by = 5))
+fig_rarefaction
 ggsave("fig_rarefaction.png", fig_rarefaction, width = 14, height = 8, dpi = 300)
 ```
 
@@ -154,7 +147,7 @@ ggsave("fig_rarefaction.png", fig_rarefaction, width = 14, height = 8, dpi = 300
 Overall, we can see the percent of our data that has a listed Collector. 
 We can also filter our data so only data with a Collector is being used for the bias checks. 
 
-```{r collectoroverallpercent1_benthicpim, fig.height=2.5, fig.width=10}
+```{r fig_contributions_prep, fig.height=2.5, fig.width=10}
 # Calculate percentage ---------------------------------------------------------------
 missing_percentage <- 100 *
   sum(master_data$Collector == "MISSING") / nrow(master_data)
@@ -166,7 +159,7 @@ collector_data <- filter(master_data, Collector != "MISSING") %>%
 Next we can look at the contributions of each Collector towards the total collected data, colored by AGRRA vs MBRS protocol. 
 Collectors above the line contribute to more than 3% of the data.
 
-```{r collectoroverallpercent2_benthicpim, fig.height=3, fig.width=10}
+```{r fig_contributions, fig.height=3, fig.width=10}
 # Visualize collector contributions ---------------------------------------------------------------
 summary_data <- collector_data %>%
   group_by(Protocol, Collector) %>%
@@ -191,255 +184,95 @@ fig_contributions <- ggplot(summary_data, aes(x = factor(Collector, levels = col
   theme_pubclean() +
   scale_y_continuous(breaks = seq(0, 40, by = 5)) +
   geom_hline(yintercept = 3, linetype = "dashed", color = "black", size = 0.5)
+fig_contributions
 ggsave("fig_contributions.png", fig_contributions, width = 8, height = 5, dpi = 300)
 ```
 
 ### Protocol Bias
 
+To view protocol bias, let's make summary datasets for each type of benthic code/classification, 
+which summarize percent of transects that each benthic code/classification account for under each protocol. 
 
-First, let's make summary datasets for each type of benthic code/classification, which summarize percent of transects that each benthic code/classfiication account for under each protocol. 
-
-```{r organismcodebuckets1_benthicpim, fig.height=9, fig.width=12}
-options(scipen = 999)
-
-# Create data storing information on the relationship between benthic codes and the 3 classification systems
-organism_data <- organism_data %>%
+```{r fig_codes_prep, fig.height=9, fig.width=12}
+# Create classifications key ---------------------------------------------------------------
+organism_data_key <- organism_data %>%
   select(Organism, Bucket, Bucket2, AGRRA_Bucket) %>%
   distinct()
 
-# Determine how many observations were made per unique transect
+# Count observations per unique transect ---------------------------------------------------------------
 transect_counts <- collector_data %>%
-  group_by(Uniq_Transect) %>%
+  group_by(Transect, Site, Year) %>%
   summarise(Observations = n_distinct(row_number()))
 
-# Create summary data for bucket system 1
-summary_data2 <- collector_data %>%
-  left_join(organism_data %>% select(Organism, Bucket), by = "Organism") %>%
-  arrange(Organism, Bucket) %>%
-  group_by(Bucket, Protocol) %>%
-  summarise(Count = n()) %>%
-  na.omit() %>%
-  mutate(
-    Observations = case_when(
-      Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
-      Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))
+# Determine order of buckets and organisms ---------------------------------------------------------------
+get_order <- function(column) {
+  summary <- collector_data %>%
+    left_join(organism_data_key %>% select(Organism, {{ column }}), by = "Organism") %>%
+    group_by({{ column }}, Protocol) %>%
+    summarise(Count = n()) %>%
+    na.omit() %>%
+    mutate(
+      Observations = case_when(
+        Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
+        Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))
+      ),
+      Count_per_100Observations = Count / Observations * 100
     )
-  ) %>%
-  mutate(
-    Count_per_100Observations = (Count / (Observations / 100))
-  ) %>%
-  arrange(Protocol, Count_per_100Observations) %>%
-  filter(Bucket != "MISSING" & Bucket != "MANI" & Bucket != "MUSS")
+  code_order <- summary %>%
+    arrange(-Count_per_100Observations) %>%
+    select({{ column }}) %>%
+    distinct() %>%
+    pull({{ column }})
+  head(code_order, 8)
+}
+code_order <- get_order(Bucket)
+code_order2 <- get_order(Bucket2)
+code_order3 <- get_order(AGRRA_Bucket)
+code_orderall <- get_order(Organism)
 
-# Create summary data for bucket system 2
-summary_data3 <- collector_data %>%
-  left_join(organism_data %>% select(Organism, Bucket2), by = "Organism") %>%
-  arrange(Organism, Bucket2) %>%
-  group_by(Bucket2, Protocol) %>%
-  summarise(Count = n()) %>%
-  na.omit() %>%
-  mutate(
-    Observations = case_when(
-      Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
-      Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))
-    )
-  ) %>%
-  mutate(
-    Count_per_100Observations = (Count / (Observations / 100))
-  ) %>%
-  arrange(Protocol, Count_per_100Observations) %>%
-  filter(Bucket2 != "MISSING")
-
-# Create summary data for AGRRA's bucket system
-summary_data4 <- collector_data %>%
-  left_join(organism_data %>% select(Organism, AGRRA_Bucket), by = "Organism") %>%
-  arrange(Organism, AGRRA_Bucket) %>%
-  group_by(AGRRA_Bucket, Protocol) %>%
-  summarise(Count = n()) %>%
-  na.omit() %>%
-  mutate(
-    Observations = case_when(
-      Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
-      Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))
-    )
-  ) %>%
-  mutate(
-    Count_per_100Observations = (Count / (Observations / 100))
-  ) %>%
-  arrange(Protocol, -Count_per_100Observations)
-
-# Create summary data for raw organism codes
-summary_data5 <- collector_data %>%
-  arrange(Organism) %>%
-  group_by(Organism, Protocol) %>%
-  summarise(Count = n()) %>%
-  na.omit() %>%
-  mutate(
-    Observations = case_when(
-      Protocol == "AGRRA" ~ nrow(filter(collector_data, Protocol == "AGRRA")),
-      Protocol == "MBRS" ~ nrow(filter(collector_data, Protocol == "MBRS"))
-    )
-  ) %>%
-  mutate(
-    Count_per_100Observations = (Count / (Observations / 100))
-  ) %>%
-  arrange(Protocol, Count_per_100Observations)
-
-# Create summary data for bucket system 1 by unique transect
-summary_data6 <- collector_data %>%
-  left_join(organism_data %>% select(Organism, Bucket), by = "Organism") %>%
-  arrange(Organism, Bucket) %>%
-  group_by(Bucket, Protocol, Uniq_Transect) %>%
-  summarise(Count = n()) %>%
-  na.omit() %>%
-  left_join(transect_counts, by = "Uniq_Transect") %>%
-  mutate(
-    Percent_of_Transect = (Count / Observations * 100)
-  ) %>%
-  arrange(Percent_of_Transect) %>%
-  filter(Bucket != "MISSING" & Bucket != "MANI" & Bucket != "MUSS")
-
-# Create summary data for bucket system 2 by unique transect
-summary_data7 <- collector_data %>%
-  left_join(organism_data %>% select(Organism, Bucket2), by = "Organism") %>%
-  arrange(Organism, Bucket2) %>%
-  group_by(Bucket2, Protocol, Uniq_Transect) %>%
-  summarise(Count = n()) %>%
-  na.omit() %>%
-  left_join(transect_counts, by = "Uniq_Transect") %>%
-  mutate(
-    Percent_of_Transect = (Count / Observations * 100)
-  ) %>%
-  arrange(Percent_of_Transect) %>%
-  filter(Bucket2 != "MISSING" & Bucket2 != "MANI" & Bucket2 != "MUSS")
-
-# Create summary data for agrra's classification system by unique transect
-summary_data8 <- collector_data %>%
-  left_join(organism_data %>% select(Organism, AGRRA_Bucket), by = "Organism") %>%
-  arrange(Organism, AGRRA_Bucket) %>%
-  group_by(AGRRA_Bucket, Protocol, Uniq_Transect) %>%
-  summarise(Count = n()) %>%
-  na.omit() %>%
-  left_join(transect_counts, by = "Uniq_Transect") %>%
-  mutate(
-    Percent_of_Transect = (Count / Observations * 100)
-  ) %>%
-  arrange(Percent_of_Transect) %>%
-  filter(AGRRA_Bucket != "MISSING" & AGRRA_Bucket != "MANI" & AGRRA_Bucket != "MUSS")
-
-# Create summary data for raw organism codes by unique transect
-summary_data9 <- collector_data %>%
-  left_join(organism_data %>% select(Organism, AGRRA_Bucket), by = "Organism") %>%
-  arrange(Organism) %>%
-  group_by(Organism, Protocol, Uniq_Transect) %>%
-  summarise(Count = n()) %>%
-  na.omit() %>%
-  left_join(transect_counts, by = "Uniq_Transect") %>%
-  mutate(
-    Percent_of_Transect = (Count / Observations * 100)
-  ) %>%
-  arrange(Percent_of_Transect) %>%
-  filter(Organism != "MISSING" & Organism != "MANI" & Organism != "MUSS") %>%
-  arrange(Percent_of_Transect)
-
-# Determine order of benthic codes/classifications so specific groups may be easily plotted
-code_order <- unique(summary_data2$Bucket)
-code_order2 <- unique(summary_data3$Bucket2)
-code_orderAGRRA <- unique(summary_data4$AGRRA_Bucket)
-code_orderall <- filter(summary_data5, Protocol == "AGRRA")$Organism
+# Create transect-level summary datasets ---------------------------------------------------------------
+get_summary <- function(column, order) {
+  summary <- collector_data %>%
+    left_join(organism_data_key %>% select(Organism, {{ column }}), by = "Organism") %>%
+    group_by({{ column }}, Protocol, Year, Site, Transect) %>%
+    summarise(Count = n(), .groups = "drop_last") %>%
+    na.omit() %>%
+    left_join(transect_counts, by = c("Year", "Site", "Transect")) %>%
+    mutate(Percent_of_Transect = Count / Observations * 100) %>%
+    filter({{ column }} %in% order) %>%
+    mutate(Sorter = factor({{ column }}, levels = order))
+  summary
+}
+summary_data_bucket1 <- get_summary(Bucket, code_order)
+summary_data_bucket2 <- get_summary(Bucket2, code_order2)
+summary_data_bucket3 <- get_summary(AGRRA_Bucket, code_order3)
+summary_data_organisms <- get_summary(Organism, code_orderall)
 ```
 
-Now we can plot a boxplot of percent observations of the eight most commonly used codes separated by protocol. A is the raw codes, B is buckets designed to represent the lowest shared categories between all codes, C is buckets from B but with coral grouped and fire coral grouped, D is classification system used by AGRRA. 
+Now we can plot a boxplot of percent observations of the eight most commonly used codes separated by protocol. 
+A is the raw codes, B is buckets designed to represent the lowest shared categories between all codes, 
+C is buckets from B but with coral grouped and fire coral grouped, D is classification system used by AGRRA. 
 
-
-```{r organismcodebuckets2_benthicpim, fig.height=12, fig.width=12}
-# Theme for plot
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 90, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-h_line1 <- geom_hline(yintercept = c(25, 50, 75, 100), linetype = "dashed", color = "darkgrey", size = 0.75)
-h_line2 <- geom_hline(yintercept = c(12.5, 37.5, 62.5, 87.5), linetype = "dotted", color = "darkgrey", size = 0.5)
-
-A <- ggplot(
-  filter(summary_data9, Organism %in% tail(code_orderall, 8)),
-  aes(
-    x = factor(Organism, levels = tail(code_orderall, 8)),
-    y = Percent_of_Transect, fill = Protocol
-  )
-) +
-  h_line1 +
-  h_line2 +
-  geom_boxplot(color = "black", width = 1) +
-  theme_classic() +
-  labs(x = "", y = "Percent Observations per Transect", title = "A") +
-  scale_fill_manual(values = palette[1:2], name = "Protocol") +
-  xy +
-  coord_cartesian(ylim = c(0, 100)) +
-  facet_wrap(~Protocol)
-
-B <- ggplot(
-  filter(summary_data6, Bucket %in% tail(code_order, 8)),
-  aes(
-    x = factor(Bucket, levels = tail(code_order, 8)),
-    y = Percent_of_Transect, fill = Protocol
-  )
-) +
-  h_line1 +
-  h_line2 +
-  geom_boxplot(color = "black", width = 1) +
-  theme_classic() +
-  labs(x = "", y = "", title = "B") +
-  scale_fill_manual(values = palette[1:2], name = "Protocol") +
-  xy +
-  coord_cartesian(ylim = c(0, 100)) +
-  facet_wrap(~Protocol)
-
-C <- ggplot(
-  filter(summary_data7, Bucket2 %in% tail(code_order2, 8)),
-  aes(
-    x = factor(Bucket2, levels = tail(code_order2, 8)),
-    y = Percent_of_Transect, fill = Protocol
-  )
-) +
-  h_line1 +
-  h_line2 +
-  geom_boxplot(color = "black", width = 1) +
-  theme_classic() +
-  labs(x = "", y = "", title = "C") +
-  scale_fill_manual(values = palette[1:2], name = "Protocol") +
-  xy +
-  coord_cartesian(ylim = c(0, 100)) +
-  facet_wrap(~Protocol)
-
-D <- ggplot(
-  filter(summary_data8, AGRRA_Bucket %in% head(code_orderAGRRA, 8)),
-  aes(
-    x = factor(AGRRA_Bucket, levels = rev(head(code_orderAGRRA, 8))),
-    y = Percent_of_Transect, fill = Protocol
-  )
-) +
-  h_line1 +
-  h_line2 +
-  geom_boxplot(color = "black", width = 1) +
-  theme_classic() +
-  labs(x = "", y = "Percent Observations per Transect", title = "D") +
-  scale_fill_manual(values = palette[1:2], name = "Protocol") +
-  xy +
-  coord_cartesian(ylim = c(0, 100)) +
-  facet_wrap(~Protocol)
-
+```{r fig_codes, fig.height=12, fig.width=12}
+# Plot observations of common codes ---------------------------------------------------------------
+get_plot <- function(data, name, axis) {
+  ggplot(data, aes(x = Sorter, y = Percent_of_Transect, fill = Protocol)) +
+    geom_boxplot(color = "black", width = 0.6) +
+    theme_pubclean() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+    labs(x = "", y = axis, title = name) +
+    scale_fill_manual(values = palette) +
+    coord_cartesian(ylim = c(0, 100))
+}
+A <- get_plot(summary_data_organisms, "A", "% Observations / Transect")
+B <- get_plot(summary_data_bucket1, "B", "")
+C <- get_plot(summary_data_bucket2, "C", "")
+D <- get_plot(summary_data_bucket3, "D", "% Observations / Transect")
 plot_row1 <- ggarrange(A, B, C, ncol = 3, common.legend = TRUE, legend = "top")
 plot_row2 <- ggarrange(D, ncol = 1, legend = "none")
-Protocol_Plot <- ggarrange(plot_row1, plot_row2, nrow = 2, heights = c(1, 1.3))
-
-# ggsave("fig3_protocolcodes.png", plot = Protocol_Plot, width = 12, height = 12, units = "in", dpi = 800)
-Protocol_Plot
+fig_codes <- ggarrange(plot_row1, plot_row2, nrow = 2, heights = c(1, 1.3))
+fig_codes
+ggsave("fig_codes.png", fig_codes, width = 12, height = 9, dpi = 300)
 ```
 
 ### Collector Bias
