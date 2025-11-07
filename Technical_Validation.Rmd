@@ -602,6 +602,7 @@ A <- ggplot(nmds_data_counts, aes(x = NMDS1, y = NMDS2, color = Protocol)) +
   stat_ellipse(aes(fill = Protocol), geom = "polygon", alpha = 0.2, color = "black") +
   geom_point(data = means, aes(x = mean_NMDS1, y = mean_NMDS2, color = Protocol), size = 4, shape = 19) +
   theme_pubclean() +
+  labs(title = "A") +
   scale_fill_manual(values = palette) +
   scale_color_manual(values = palette)
 means2 <- nmds_data_counts %>%
@@ -611,6 +612,7 @@ B <- ggplot(nmds_data_counts, aes(x = NMDS1, y = NMDS2, color = Collector)) +
   stat_ellipse(aes(fill = Collector), geom = "polygon", alpha = 0.2, color = "black") +
   geom_point(data = means2, aes(x = mean_NMDS1, y = mean_NMDS2, color = Collector), size = 4, shape = 19) +
   theme_pubclean() +
+  labs(title = "B") +
   facet_wrap(~Protocol) +
   scale_fill_manual(values = palette[-(1:2)]) +
   scale_color_manual(values = palette[-(1:2)])
@@ -631,6 +633,7 @@ A <- ggplot(nmds_data_binary, aes(x = NMDS1, y = NMDS2, color = Protocol)) +
   stat_ellipse(aes(fill = Protocol), geom = "polygon", alpha = 0.2, color = "black") +
   geom_point(data = means, aes(x = mean_NMDS1, y = mean_NMDS2, color = Protocol), size = 4, shape = 19) +
   theme_pubclean() +
+  labs(title = "A") +
   scale_fill_manual(values = palette) +
   scale_color_manual(values = palette)
 means2 <- nmds_data_binary %>%
@@ -640,19 +643,13 @@ B <- ggplot(nmds_data_binary, aes(x = NMDS1, y = NMDS2, color = Collector)) +
   stat_ellipse(aes(fill = Collector), geom = "polygon", alpha = 0.2, color = "black") +
   geom_point(data = means2, aes(x = mean_NMDS1, y = mean_NMDS2, color = Collector), size = 4, shape = 19) +
   theme_pubclean() +
+  labs(title = "B") +
   facet_wrap(~Protocol) +
   scale_fill_manual(values = palette[-(1:2)]) +
   scale_color_manual(values = palette[-(1:2)])
 fig_biplot_fish_binary <- ggarrange(A, B, nrow = 2)
 fig_biplot_fish_binary
 ggsave("fig_biplot_fish_binary.png", fig_biplot_fish_binary, width = 8, height = 10, dpi = 300)
-
-
-adonis2(
-  fish_dist ~ Collector + Protocol,
-  data = nmds_metadata,
-  permutations = how(blocks = nmds_metadata$Site)
-)
 ```
 
 We can do a PERMANOVA to look for significant.
