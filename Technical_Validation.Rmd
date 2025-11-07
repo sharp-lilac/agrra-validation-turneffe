@@ -646,7 +646,30 @@ B <- ggplot(nmds_data_binary, aes(x = NMDS1, y = NMDS2, color = Collector)) +
 fig_biplot_fish_binary <- ggarrange(A, B, nrow = 2)
 fig_biplot_fish_binary
 ggsave("fig_biplot_fish_binary.png", fig_biplot_fish_binary, width = 8, height = 10, dpi = 300)
+
+
+adonis2(
+  fish_dist ~ Collector + Protocol,
+  data = nmds_metadata,
+  permutations = how(blocks = nmds_metadata$Site)
+)
 ```
 
+We can do a PERMANOVA to look for significant.
 
+```{r permanova_fish, fig.height=4, fig.width=10}
+# Conduct PERMANOVAs ---------------------------------------------------------------
+adonis_res <- adonis2(
+  fish_dist ~ Collector + Protocol,
+  data = nmds_metadata,
+  permutations = how(blocks = nmds_metadata$Site)
+)
+adonis_res
+adonis_res_binary <- adonis2(
+  fish_dist_binary ~ Collector + Protocol,
+  data = nmds_metadata,
+  permutations = how(blocks = nmds_metadata$Site)
+)
+adonis_res_binary
+```
 
