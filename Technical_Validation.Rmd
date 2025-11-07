@@ -336,8 +336,6 @@ Next, we can perform the PCA. Let's view a summary of the first 2 principal comp
 ```{r pca_calculation, fig.height=4, fig.width=10, results='asis'}
 # Perform PCA ---------------------------------------------------------------
 pca_data_hellinger <- decostand(pca_data, method = "hellinger")
-# pca_result <- prcomp(pca_data_hellinger, center = TRUE, scale. = FALSE)
-# as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
 
 # Extract residuals with LMM per bucket ---------------------------------------------------------------
 bucket_cols <- setdiff(names(pca_data_hellinger), c("Year", "Site", "Collector", "Protocol"))
@@ -437,20 +435,12 @@ adonis_res
 # Reef Fish Surveys
 
 ```{r start_fish, message=FALSE, warning=FALSE, results='hide'}
-# Setup. Load in necessary data.
-
-master_data <- read.csv("Master_Fish_Survey_2010-2023_V19.csv",
-  na.strings = c("NA")
-) # load master data
-fish_data <- read.csv("Fish_Species_V5.csv",
-  na.strings = c("NA")
-) # load fish data
-collector_data <- read.csv("Collectors_Turneffe_V4.csv",
-  na.strings = c("NA")
-) # load collector data
-sites_data <- read.csv("Sites_Turneffe_V4.csv",
-  na.strings = c("NA")
-) # load sites data
+# Load data ---------------------------------------------------------------
+master_data <- dfs$`Master_Fish_Survey_2010-2025`
+fish_data <- dfs$Ref_Fish_Species
+collector_data <- dfs$Ref_Collectors_Turneffe
+sites_data <- dfs$Ref_Sites_Turneffe
+View(fish_data)
 ```
 
 
@@ -458,37 +448,38 @@ sites_data <- read.csv("Sites_Turneffe_V4.csv",
 ## Differential Identification of Fish
 
 
-Overall, we can see the percent of our data that has a listed Collector. We can also filter our data so only data with a Collector are being used for the bias checks. We can also filter our data so it excludes 0-5cm Size Class and Fish that were only surveyed for in certain years or protocols.
+Overall, we can see the percent of our data that has a listed Collector. 
+We can also filter our data so only data with a Collector are being used for the bias checks. 
+We can also filter our data so it excludes 0-5cm Size Class and Fish that were only surveyed for in certain years or protocols.
 
 
 ```{r collectoroverallpercent1_fish, fig.height=2.5, fig.width=10}
 missing_percentage <- 100 *
   sum(master_data$Collector == "MISSING") / nrow(master_data)
 cat("Data with a Collector:", sprintf("%.2f%%", 100 - missing_percentage))
-collector_data <- filter(
-  master_data, Collector != "MISSING", Size_Class != "0_05",
-  Fish != "Yellowhead Wrasse", Fish != "Threespot Damselfish",
-  Fish != "Slippery Dick Wrasse", Fish != "Puddingwife Wrasse",
-  Fish != "Sheepshead Porgy", Fish != "Saucereye Porgy",
-  Fish != "Lionfish"
-)
+collector_data <- master_data %>%
+  filter(Collector != "MISSING", Size_Class != "0_05") %>%
+  left_join(fish_data, by = "Fish_Scientific") %>%
+  filter(if_all(starts_with("List_"), ~ .x == "Yes"))
 ```
 
-Next we can look at the contributions of each Collector towards the total collected data, colored by AGRRA vs MBRS protocol. Collectors above the line contribute to more than 3% of the data.
+Next we can look at the contributions of each Collector towards the total collected data, 
+colored by AGRRA vs MBRS protocol. Collectors above the line contribute to more than 3% of the data for a protocol.
 
 ```{r collectoroverallpercent2_fish, fig.height=3, fig.width=10}
-summary_data <- collector_data %>%
-  group_by(Collector, Protocol) %>%
-  summarise(Percentage = n() / nrow(collector_data) * 100) %>%
-  arrange(Protocol, Percentage)
-
-
-collector_order <- summary_data$Collector
-
-ggplot(summary_data, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
-  geom_hline(yintercept = c(5, 10, 15, 20), linetype = "dashed", color = "darkgrey", size = 0.75) +
-  geom_hline(yintercept = c(2.5, 7.5, 12.5, 17.5), linetype = "dotted", color = "darkgrey", size = 0.5) +
-  geom_col(width = 1, color = "black") +
+summary_data_contributions <- collector_data %>%
+  group_by(Protocol, Collector) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  group_by(Protocol) %>%
+  mutate(Percentage = Count / sum(Count) * 100) %>%
+  ungroup()
+collector_order <- summary_data_contributions %>%
+  group_by(Collector) %>%
+  summarise(Total = sum(Count)) %>%
+  arrange(desc(Total)) %>%
+  pull(Collector)
+fig_contributions_fish <- ggplot(summary_data_contributions, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
+  geom_col(width = 0.6, color = "black", position = "dodge") +
   theme_classic() +
   labs(x = "Collector", y = "Percent of Data") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
@@ -496,10 +487,11 @@ ggplot(summary_data, aes(x = factor(Collector, levels = collector_order), y = Pe
     name = "Protocol",
     values = c("AGRRA" = "#56B4E9", "MBRS" = "#E69F00")
   ) +
-  geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 3),
-    fill = "grey", alpha = 0.05, inherit.aes = FALSE
-  ) +
-  geom_hline(yintercept = 3, linetype = "solid", color = "black", size = 0.5)
+  theme_pubclean() +
+  scale_y_continuous(breaks = seq(0, 40, by = 5)) +
+  geom_hline(yintercept = 3, linetype = "dashed", color = "black", size = 0.5)
+fig_contributions_fish
+ggsave("fig_contributions_fish.png", fig_contributions_fish, width = 8, height = 5, dpi = 300)
 ```
 
 
