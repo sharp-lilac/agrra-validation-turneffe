@@ -453,7 +453,8 @@ We can also filter our data so only data with a Collector are being used for the
 We can also filter our data so it excludes 0-5cm Size Class and Fish that were only surveyed for in certain years or protocols.
 
 
-```{r collectoroverallpercent1_fish, fig.height=2.5, fig.width=10}
+```{r fig_contributions_fish_prep, fig.height=2.5, fig.width=10}
+# Filter data ---------------------------------------------------------------
 missing_percentage <- 100 *
   sum(master_data$Collector == "MISSING") / nrow(master_data)
 cat("Data with a Collector:", sprintf("%.2f%%", 100 - missing_percentage))
@@ -466,7 +467,8 @@ collector_data <- master_data %>%
 Next we can look at the contributions of each Collector towards the total collected data, 
 colored by AGRRA vs MBRS protocol. Collectors above the line contribute to more than 3% of the data for a protocol.
 
-```{r collectoroverallpercent2_fish, fig.height=3, fig.width=10}
+```{r fig_contributions_fish, fig.height=3, fig.width=10}
+# Summarize data ---------------------------------------------------------------
 summary_data_contributions <- collector_data %>%
   group_by(Protocol, Collector) %>%
   summarise(Count = n(), .groups = "drop") %>%
@@ -478,6 +480,8 @@ collector_order <- summary_data_contributions %>%
   summarise(Total = sum(Count)) %>%
   arrange(desc(Total)) %>%
   pull(Collector)
+
+# Create collector contributions plot ---------------------------------------------------------------
 fig_contributions_fish <- ggplot(summary_data_contributions, aes(x = factor(Collector, levels = collector_order), y = Percentage, fill = Protocol)) +
   geom_col(width = 0.6, color = "black", position = "dodge") +
   theme_classic() +
@@ -495,34 +499,22 @@ ggsave("fig_contributions_fish.png", fig_contributions_fish, width = 8, height =
 ```
 
 
+We can similarly look at how many of each fish were found throughout the surveys. 
 
-
-We can similarly look at how many of each fish were found throughout the surveys. We can see most fish have at least 10 observations, and nine species have over 1000 observations.
-
-```{r collector_bias2.1, fig.height=8, fig.width=15}
-summary_data2 <- collector_data %>%
-  group_by(Fish) %>%
+```{r fig_fish_found, fig.height=8, fig.width=15}
+# Summarize data ---------------------------------------------------------------
+summary_fish_found <- collector_data %>%
+  group_by(Fish.x, Fish_Family) %>%
   summarise(Sum = sum(Observations)) %>%
-  left_join(fish_data %>% select(Fish, Fish_Family), by = "Fish") %>%
-  arrange(Fish_Family, Sum, Fish)
+  arrange(Fish_Family, Sum, Fish.x)
+fish_order <- summary_fish_found$Fish.x
+summary_fish_found <- summary_fish_found %>%
+  mutate(Fish.x = factor(Fish.x, levels = fish_order, ordered = TRUE))
 
-fish_order <- summary_data2$Fish
-
-ggplot(
-  filter(summary_data2, Sum != 0),
-  aes(x = factor(Fish, levels = fish_order), y = log(Sum), fill = Fish_Family)
-) +
-  geom_hline(yintercept = log1p(c(1, 10, 100, 1000, 10000)), linetype = "solid", color = "black", size = 1) +
-  geom_hline(yintercept = log1p(c(2, 20, 200, 2000)), linetype = "solid", color = "darkgrey", size = 0.5) +
-  geom_hline(yintercept = log1p(c(3, 30, 300, 3000)), linetype = "solid", color = "darkgrey", size = 0.5) +
-  geom_hline(yintercept = log1p(c(4, 40, 400, 4000)), linetype = "solid", color = "darkgrey", size = 0.5) +
-  geom_hline(yintercept = log1p(c(5, 50, 500, 5000)), linetype = "solid", color = "darkgrey", size = 0.5) +
-  geom_hline(yintercept = log1p(c(6, 60, 600, 6000)), linetype = "solid", color = "darkgrey", size = 0.5) +
-  geom_hline(yintercept = log1p(c(7, 70, 700, 7000)), linetype = "solid", color = "darkgrey", size = 0.5) +
-  geom_hline(yintercept = log1p(c(8, 80, 800, 8000)), linetype = "solid", color = "darkgrey", size = 0.5) +
-  geom_hline(yintercept = log1p(c(9, 90, 900, 9000)), linetype = "solid", color = "darkgrey", size = 0.5) +
+# Plot fish counts by species ---------------------------------------------------------------
+fig_fish_found <- ggplot(summary_fish_found, aes(x = Fish.x, y = log(Sum), fill = Fish_Family)) +
   geom_col(color = "black", width = 1, alpha = 0.8) +
-  theme_classic() +
+  theme_pubclean() +
   labs(x = "Fish Species", y = "Observations") +
   theme(
     legend.position = "top", axis.text.x = element_text(
@@ -540,6 +532,8 @@ ggplot(
   coord_cartesian(ylim = c(0, log1p(9000))) +
   scale_fill_manual(values = palette, name = "Fish Family") +
   scale_y_continuous(breaks = log1p(c(1, 10, 100, 1000, 10000)), labels = c(1, 10, 100, 1000, 10000))
+fig_fish_found
+ggsave("fig_fish_found.png", fig_fish_found, width = 14, height = 8, dpi = 300)
 ```
 
 Before doing the analyses, we will also filter the data so it only includes data from collectors that contribute \>3%. This is so we can assess collector bias between the primary data collectors. Similarly, we filter out fish species with fewer than 50 total observations across all years, as we are not looking at the effect of collector bias on finding rare fish here.
