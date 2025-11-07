@@ -334,7 +334,7 @@ rownames(pca_data) <- rownames_pca
 Next, we can perform the PCA. Let's view a summary of the first 2 principal components. 
 
 ```{r pca_calculation, fig.height=4, fig.width=10, results='asis'}
-# Perform PCA ---------------------------------------------------------------
+# Transform data ---------------------------------------------------------------
 pca_data_hellinger <- decostand(pca_data, method = "hellinger")
 
 # Extract residuals with LMM per bucket ---------------------------------------------------------------
@@ -440,7 +440,6 @@ master_data <- dfs$`Master_Fish_Survey_2010-2025`
 fish_data <- dfs$Ref_Fish_Species
 collector_data <- dfs$Ref_Collectors_Turneffe
 sites_data <- dfs$Ref_Sites_Turneffe
-View(fish_data)
 ```
 
 
@@ -517,17 +516,10 @@ fig_fish_found <- ggplot(summary_fish_found, aes(x = Fish.x, y = log(Sum), fill 
   theme_pubclean() +
   labs(x = "Fish Species", y = "Observations") +
   theme(
-    legend.position = "top", axis.text.x = element_text(
+    axis.text.x = element_text(
       angle = 90, face = "bold", size = 11,
       vjust = 0.5, hjust = 1
-    ),
-    axis.text.y = element_text(
-      face = "bold", size = 11,
-      vjust = 0.5, hjust = 1
-    ),
-    axis.title = element_text(size = 13),
-    legend.text = element_text(size = 12),
-    legend.title = element_text(size = 14)
+    )
   ) +
   coord_cartesian(ylim = c(0, log1p(9000))) +
   scale_fill_manual(values = palette, name = "Fish Family") +
@@ -536,525 +528,125 @@ fig_fish_found
 ggsave("fig_fish_found.png", fig_fish_found, width = 14, height = 8, dpi = 300)
 ```
 
-Before doing the analyses, we will also filter the data so it only includes data from collectors that contribute \>3%. This is so we can assess collector bias between the primary data collectors. Similarly, we filter out fish species with fewer than 50 total observations across all years, as we are not looking at the effect of collector bias on finding rare fish here.
+Before doing the analyses, we will also filter the data so it only includes data from collectors that contribute more than 5% for a protocol. 
+This is so we can assess collector bias between the primary data collectors. 
+Similarly, we filter out fish species with fewer than 50 total observations across all years, 
+as we are not looking at the effect of collector bias on finding rare fish here.
 
-```{r collector_bias2.22, fig.height=3.5, fig.width=10}
-filtered_data <- collector_data %>%
-  group_by(Collector) %>%
-  summarise(Percentage = n() / nrow(collector_data) * 100) %>%
-  filter(Percentage > 3) %>%
-  inner_join(collector_data, by = "Collector") %>%
-  select(Collector, Year, Site, Uniq_Transect, Protocol, Fish, Size_Class, Observations)
-
-filtered_data <- filtered_data %>%
-  group_by(Fish) %>%
+```{r fish_data_filtering, fig.height=3.5, fig.width=10}
+# Filter data ---------------------------------------------------------------
+contributions_10 <- summary_data_contributions %>%
+  filter(Percentage > 10)
+fish_50 <- collector_data %>%
+  group_by(Fish.x) %>%
   summarise(TotalObservations = sum(Observations)) %>%
-  filter(TotalObservations >= 50) %>%
-  inner_join(filtered_data, by = "Fish")
+  filter(TotalObservations >= 50)
+filtered_data <- collector_data %>%
+  inner_join(contributions_5, by = c("Collector", "Protocol")) %>%
+  inner_join(fish_50, by = c("Fish.x")) %>%
+  select(Collector, Year, Site, Transect, Protocol, Fish.x, Observations)
 ```
 
 
-### Principal Components Analysis
+### NMDS
 
 #### Fish Counts
 
-Let's prepare our data for a PCA. 
+Let's prepare our data for an NMDS. 
 
 
-```{r pca1_benthicpim, fig.height=10, fig.width=10}
-# Use filtered_data to make pca data. Format as wide data. Total fish from size classes to single sum.
-pca_data <- filtered_data %>%
-  select(Uniq_Transect, Collector, Protocol, Fish, Observations) %>%
-  group_by(Uniq_Transect, Collector, Protocol, Fish) %>%
-  summarize(Observations = sum(Observations)) %>%
-  pivot_wider(names_from = Fish, values_from = Observations, values_fill = 0) %>%
-  ungroup()
+```{r nmds_data, fig.height=10, fig.width=10}
+# Format data for NMDS ---------------------------------------------------------------
+nmds_data <- filtered_data %>%
+  group_by(Year, Site, Transect, Collector, Protocol, Fish.x) %>%
+  summarise(Abundance = sum(Observations), .groups = "drop") %>%
+  mutate(Uniq_Transect = paste(Year, Site, Transect)) %>%
+  pivot_wider(names_from = Fish.x, values_from = Abundance, values_fill = 0)
+nmds_metadata <- nmds_data %>%
+  select(Year, Site, Transect, Collector, Protocol, Uniq_Transect)
+rownames(nmds_data) <- nmds_data$Uniq_Transect
+nmds_data_ready <- nmds_data %>% select(-c(Year, Site, Transect, Collector, Protocol, Uniq_Transect))
+```
 
-# Preserve detailed version as metadata
-pca_data_metadata <- pca_data
-rownames_pca <- pca_data$Uniq_Transect
-pca_data <- select(pca_data, -c("Protocol", "Uniq_Transect", "Collector"))
-rownames(pca_data) <- rownames_pca
+Let's run the NMDS. 
+
+
+```{r nmds_calculation, fig.height=10, fig.width=10}
+# Transform data ---------------------------------------------------------------
+fish_hellinger <- decostand(nmds_data_ready, method = "hellinger")
+
+# Perform NMDS (Counts) ---------------------------------------------------------------
+fish_dist <- vegdist(fish_hellinger, method = "bray")
+nmds_result_counts <- metaMDS(fish_dist, k = 2, trymax = 20)
+nmds_result_counts$stress
+nmds_scores_counts <- as.data.frame(scores(nmds_result_counts))
+nmds_data_counts <- cbind(nmds_metadata, nmds_scores_counts)
+
+# Perform NMDS (Binary) ---------------------------------------------------------------
+fish_dist_binary <- vegdist(nmds_data_ready > 0, method = "jaccard")
+nmds_result_binary <- metaMDS(fish_dist_binary, k = 2, trymax = 20)
+nmds_result_binary$stress
+nmds_scores_binary <- as.data.frame(scores(nmds_result_binary))
+nmds_data_binary <- cbind(nmds_metadata, nmds_scores_binary)
 ```
 
 
-Next, we can perform the PCA. Let's view a summary of the first 2 principal components. We see here that the first 2 components cumulatively explain a proportion of 0.421 (or 42.1%) of variation in the total data.
+We can visualize the fish counts PCA with a biplot.
 
-```{r collector_bias4, fig.height=4, fig.width=10, results='asis'}
-# Perform PCA
-pca_result <- prcomp(pca_data)
-as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
-```
-
-A scree plot allows us to visualize the percent of variation that can be explained by each component (or dimension).This scree plot has multiple elbows, making the test uncertain. However, we will continue regardless. 
-
-```{r pca3_benthicpim, fig.height=5, fig.width=10}
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 90, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-
-fviz_eig(pca_result, addlabels = TRUE, barfill = "#56B4E9", barcolor = "black") + theme_classic() + xy +
-  xlab(label = "Principal Components") + ylab(label = "Variance Explained") + ggtitle("")
-```
-
-
-
-Now we can investigate the loadings, which are how each Fish contributes to each principal component. The greatest contributors to PC1 are french grunt, bluestriped grunt, and lane snapper. 
-
-```{r pca4_benthicpim, fig.height=4, fig.width=10}
-loadings <- pca_result$rotation
-loadings_pc1 <- loadings[, 1]
-loadings_pc2 <- loadings[, 2]
-loadings_df <- data.frame(
-  Loading_PC1 = (loadings_pc1),
-  Loading_PC2 = (loadings_pc2)
-)
-loadings_df <- loadings_df %>%
-  mutate(
-    Sign_PC1 = ifelse(Loading_PC1 > 0, "pos", "neg"),
-    Sign_PC2 = ifelse(Loading_PC2 > 0, "pos", "neg")
-  ) %>%
-  mutate(
-    Loading_PC1 = format(round(abs(Loading_PC1), 3), nsmall = 3),
-    Loading_PC2 = format(round(abs(Loading_PC2), 3), nsmall = 3)
-  ) %>%
-  arrange(desc(Loading_PC1))
-head(select(loadings_df, -c(Loading_PC2, Sign_PC2)))
-```
-
-The greatest contributors to PC2 are lane snapper, french grunt, and bluestriped grunt. 
-
-```{r pca4_benthicpim, fig.height=4, fig.width=10}
-loadings_df <- loadings_df %>%
-  arrange(desc(Loading_PC2))
-head(select(loadings_df, -c(Loading_PC1, Sign_PC1)))
-```
-
-
-Moving forward with the PCA, we can extract the principal component scores for each row of data and add these to our original data set.
-
-```{r pca5_benthicpim, fig.height=4, fig.width=10}
-# Extract principal component scores
-pc_scores <- as.data.frame(pca_result$x)
-# Add to original datasets
-pca_data_metadata_supplemented <- cbind(pca_data_metadata, pc_scores)
-```
-
-
-We can now visualize the results of the PCA with a biplot. We see Protocol seem to be spread across the map, with MBRS being lower on PC1.
-
-```{r pca6_benthicpim, fig.height=5, fig.width=10}
-# theme
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 0, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-h_line1 <- geom_hline(yintercept = c(-8, -4, 0, 4, 8), linetype = "dashed", color = "darkgrey", size = 0.75)
-h_line2 <- geom_hline(yintercept = c(-6, -2, 2, 6), linetype = "dotted", color = "darkgrey", size = 0.5)
-h_line3 <- geom_hline(yintercept = 0, color = "black", size = 1)
-v_line1 <- geom_vline(xintercept = 0, color = "black", size = 1)
-
-# protocol
-means <- pca_data_metadata_supplemented %>%
+```{r fig_biplot_fish_counts, fig.height=10, fig.width=10}
+# Create biplots ---------------------------------------------------------------
+means <- nmds_data_counts %>%
   group_by(Protocol) %>%
-  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
-A <- ggplot() +
-  theme_classic() +
-  xy +
-  h_line1 +
-  h_line2 +
-  h_line3 +
-  v_line1 +
-  stat_ellipse(
-    data = pca_data_metadata_supplemented,
-    aes(x = PC1, y = PC2, fill = Protocol), level = 0.95, geom = "polygon", alpha = 0.2, color = "black"
-  ) +
-  geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Protocol), size = 4, shape = 19) +
-  labs(x = "Principal Component 1", y = "Principal Component 2", title = "A") +
+  summarize(mean_NMDS1 = mean(NMDS1), mean_NMDS2 = mean(NMDS2))
+A <- ggplot(nmds_data_counts, aes(x = NMDS1, y = NMDS2, color = Protocol)) +
+  stat_ellipse(aes(fill = Protocol), geom = "polygon", alpha = 0.2, color = "black") +
+  geom_point(data = means, aes(x = mean_NMDS1, y = mean_NMDS2, color = Protocol), size = 4, shape = 19) +
+  theme_pubclean() +
   scale_fill_manual(values = palette) +
-  scale_color_manual(values = palette) +
-  scale_x_continuous(breaks = seq(-8, 8, by = 2)) +
-  scale_y_continuous(breaks = seq(-8, 8, by = 4)) +
-  coord_cartesian(xlim = c(-8, 8))
-```
-
-And Collector is spread across as well, with collectors varying mostly for PC1. 
-
-
-```{r pca7_benthicpim, fig.height=12, fig.width=6}
-# Calculate means for each Collector
-means <- pca_data_metadata_supplemented %>%
-  group_by(Collector) %>%
-  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
-
-B <- ggplot() +
-  theme_classic() +
-  xy +
-  h_line1 +
-  h_line2 +
-  h_line3 +
-  v_line1 +
-  stat_ellipse(
-    data = pca_data_metadata_supplemented,
-    aes(x = PC1, y = PC2, fill = Collector), level = 0.95, geom = "polygon", alpha = 0.2, color = "black"
-  ) +
-  geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Collector), size = 4, shape = 19) +
-  labs(x = "Principal Component 1", y = "Principal Component 2", title = "B") +
-  scale_fill_manual(values = palette) +
-  scale_color_manual(values = palette) +
-  scale_x_continuous(breaks = seq(-8, 8, by = 2)) +
-  scale_y_continuous(breaks = seq(-8, 8, by = 4)) +
-  coord_cartesian(xlim = c(-8, 8))
-
-PCA_Plot <- ggarrange(A, B, ncol = 2, nrow = 1)
-
-PCA_Plot
+  scale_color_manual(values = palette)
+means2 <- nmds_data_counts %>%
+  group_by(Collector, Protocol) %>%
+  summarize(mean_NMDS1 = mean(NMDS1), mean_NMDS2 = mean(NMDS2))
+B <- ggplot(nmds_data_counts, aes(x = NMDS1, y = NMDS2, color = Collector)) +
+  stat_ellipse(aes(fill = Collector), geom = "polygon", alpha = 0.2, color = "black") +
+  geom_point(data = means2, aes(x = mean_NMDS1, y = mean_NMDS2, color = Collector), size = 4, shape = 19) +
+  theme_pubclean() +
+  facet_wrap(~Protocol) +
+  scale_fill_manual(values = palette[-(1:2)]) +
+  scale_color_manual(values = palette[-(1:2)])
+fig_biplot_fish_counts <- ggarrange(A, B, nrow = 2)
+fig_biplot_fish_counts
+ggsave("fig_biplot_fish_counts.png", fig_biplot_fish_counts, width = 8, height = 10, dpi = 300)
 ```
 
 
+We can visualize the fish presence/absence PCA with a biplot.
 
-
-
-Let's do a Kruskal-Wallis to investigate further. These garner significant p-values.
-
-
-```{r kruskal1_benthicpim, fig.height=4, fig.width=10}
-kw_test_pc1_collector <- kruskal.test(PC1 ~ Collector, data = pca_data_metadata_supplemented)
-kw_test_pc2_collector <- kruskal.test(PC2 ~ Collector, data = pca_data_metadata_supplemented)
-
-
-
-bind_rows(
-  data.frame(Test = "PC1 Collector", p.value = kw_test_pc1_collector$p.value),
-  data.frame(Test = "PC2 Collector", p.value = kw_test_pc2_collector$p.value),
-) %>%
-  mutate(p.value = sprintf("%.2e", p.value))
-```
-
-Running a post-hoc Dunn helps us understand specific Collector pairs that differ. Let’s display all Collector pairs that differ significantly. We can show whether these Collectors are from within the same Protocols, or from different Protocols.
-
-
-```{r dunn1_benthicpim, fig.height=4, fig.width=10, include=FALSE}
-dunn <- dunn.test(pca_data_metadata_supplemented$PC1,
-  g = pca_data_metadata_supplemented$Collector,
-  method = "bonferroni"
-)
-
-dunn2 <- dunn.test(pca_data_metadata_supplemented$PC2,
-  g = pca_data_metadata_supplemented$Collector,
-  method = "bonferroni"
-)
-```
-
-```{r dunn2_benthicpim, eval=FALSE, fig.height=4, fig.width=10}
-dunn <- dunn.test(pca_data_metadata_supplemented$PC1,
-  g = pca_data_metadata_supplemented$Collector,
-  method = "bonferroni"
-)
-
-dunn2 <- dunn.test(pca_data_metadata_supplemented$PC2,
-  g = pca_data_metadata_supplemented$Collector,
-  method = "bonferroni"
-)
-```
-
-The 5 largest absolute Z values with significant P values are created from collector pairs GAGA-JASA, JASA-ROGO, GAGA-VIAL, GAGA-IVWA, JASA-MOBA. However, there are 15 total significant collector pairs. 
-
-```{r dunn3_benthicpim,  fig.height=4, fig.width=10}
-dunn <- data.frame(dunn$comparisons, dunn$Z, dunn$P.adjusted)
-dunn2 <- data.frame(dunn2$comparisons, dunn2$Z, dunn2$P.adjusted)
-
-dunn_df <- filter(dunn, `dunn.P.adjusted` < 0.05) %>%
-  mutate(
-    "P Value" = sprintf("%.2e", (`dunn.P.adjusted`)),
-    "Pairs" = `dunn.comparisons`,
-    "Z Value (PC1)" = abs(`dunn.Z`)
-  ) %>%
-  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
-  select(Collector_1, Collector_2, `Z Value (PC1)`, `P Value`) %>%
-  arrange(desc(`Z Value (PC1)`))
-head(dunn_df, 5)
-```
-
-For PC2, the 5 largest absolute Z values with significant P values are created from collector pairs JASA-MOBA, JASA-VIAL, KENO-MOBA, KENO-VIAL, and MOBA-ROGO. However, there are 13 total significantly different collector pairs. 
-
-
-
-```{r dunn4_benthicpim,  fig.height=4, fig.width=10}
-dunn_df2 <- filter(dunn2, `dunn2.P.adjusted` < 0.05) %>%
-  mutate(
-    "P Value" = sprintf("%.2e", (`dunn2.P.adjusted`)),
-    "Pairs" = `dunn2.comparisons`,
-    "Z Value (PC1)" = abs(`dunn2.Z`)
-  ) %>%
-  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
-  select(Collector_1, Collector_2, `Z Value (PC1)`, `P Value`) %>%
-  arrange(desc(`Z Value (PC1)`))
-head(dunn_df2, 5)
-```
-
-
-
-#### Fish Presence/Absence
-
-A question that arises is whether these differences are due to differences in fish species observed, or abundance of fish. We can investigate that by adjusting our Observations to be either 0 (fish not found), or 1 (fish found at least once) for each fish species at each Uniq_Transect. We can then perform the PCA as before. We see PC1 explains a lot less variation than before, now. Only 11%, with the first two PCs only explaining 19.5% of the variation. That is compared to 60.8% for the previous PCA!
-
-```{r collector_bias14.f, echo = FALSE, fig.height=4, fig.width=10}
-# Use filtered_data to make pca data. Format as wide data. Total fish from size classes to single sum. Observations >0 assigned 1.
-pca_data <- filtered_data %>%
-  select(Uniq_Transect, Collector, Protocol, Fish, Observations) %>%
-  group_by(Uniq_Transect, Collector, Protocol, Fish) %>%
-  summarize(Observations = sum(Observations)) %>%
-  mutate(
-    Observations = ifelse(Observations >= 1, 1, 0)
-  ) %>%
-  pivot_wider(names_from = Fish, values_from = Observations, values_fill = 0) %>%
-  ungroup()
-
-# Preserve detailed version as metadata
-pca_data_metadata <- pca_data
-rownames_pca <- pca_data$Uniq_Transect
-pca_data <- select(pca_data, -c("Protocol", "Uniq_Transect", "Collector"))
-rownames(pca_data) <- rownames_pca
-```
-
-
-
-Next, we can perform the PCA. Let's view a summary of the first 2 principal components. We see here that the first 2 components cumulatively explain a proportion of only 0.166 (or 16.6%) of variation in the total data.
-
-```{r collector_bias4, fig.height=4, fig.width=10, results='asis'}
-# Perform PCA
-pca_result <- prcomp(pca_data)
-as.data.frame(round(summary(pca_result)$importance[, 1:5], 3))
-```
-
-A scree plot allows us to visualize the percent of variation that can be explained by each component (or dimension).
-
-```{r pca3_benthicpim, fig.height=5, fig.width=10}
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 90, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-
-fviz_eig(pca_result, addlabels = TRUE, barfill = "#56B4E9", barcolor = "black") + theme_classic() + xy +
-  xlab(label = "Principal Components") + ylab(label = "Variance Explained") + ggtitle("")
-```
-
-
-
-Now we can investigate the loadings, which are how each Fish contributes to each principal component. The greatest contributors to PC1 are stoplight parrotfish, french grunt, and blue tang surgeonfish.
-
-```{r pca4_benthicpim, fig.height=4, fig.width=10}
-loadings <- pca_result$rotation
-loadings_pc1 <- loadings[, 1]
-loadings_pc2 <- loadings[, 2]
-loadings_df <- data.frame(
-  Loading_PC1 = (loadings_pc1),
-  Loading_PC2 = (loadings_pc2)
-)
-loadings_df <- loadings_df %>%
-  mutate(
-    Sign_PC1 = ifelse(Loading_PC1 > 0, "pos", "neg"),
-    Sign_PC2 = ifelse(Loading_PC2 > 0, "pos", "neg")
-  ) %>%
-  mutate(
-    Loading_PC1 = format(round(abs(Loading_PC1), 3), nsmall = 3),
-    Loading_PC2 = format(round(abs(Loading_PC2), 3), nsmall = 3)
-  ) %>%
-  arrange(desc(Loading_PC1))
-head(select(loadings_df, -c(Loading_PC2, Sign_PC2)))
-```
-
-The greatest contributors to PC2 are ocean surgeonfish, foureye butterflyfish, and schoolmaster snapper. 
-
-```{r pca4_benthicpim, fig.height=4, fig.width=10}
-loadings_df <- loadings_df %>%
-  arrange(desc(Loading_PC2))
-head(select(loadings_df, -c(Loading_PC1, Sign_PC1)))
-```
-
-
-Moving forward with the PCA, we can extract the principal component scores for each row of data and add these to our original data set.
-
-```{r pca5_benthicpim, fig.height=4, fig.width=10}
-# Extract principal component scores
-pc_scores <- as.data.frame(pca_result$x)
-# Add to original datasets
-pca_data_metadata_supplemented <- cbind(pca_data_metadata, pc_scores)
-```
-
-
-We can now visualize the results of the PCA with a biplot. We see Protocol seems to be near identical.
-
-```{r pca6_benthicpim, fig.height=5, fig.width=10}
-# theme
-xy <- theme(
-  legend.position = "top", axis.text.x = element_text(
-    angle = 0, face = "bold", size = 12,
-    vjust = 0.5, hjust = 1
-  ),
-  legend.text = element_text(size = 12),
-  legend.title = element_text(size = 14),
-  title = element_text(size = 15), strip.text = element_blank(), strip.background = element_blank()
-)
-h_line1 <- geom_hline(yintercept = c(-2, -1, 0, 1, 2), linetype = "dashed", color = "darkgrey", size = 0.75)
-h_line2 <- geom_hline(yintercept = c(-1.5, -0.5, 0.5, 1.5), linetype = "dotted", color = "darkgrey", size = 0.5)
-h_line3 <- geom_hline(yintercept = 0, color = "black", size = 1)
-v_line1 <- geom_vline(xintercept = 0, color = "black", size = 1)
-
-# protocol
-means <- pca_data_metadata_supplemented %>%
+```{r fig_biplot_fish_binary, fig.height=10, fig.width=10}
+# Create biplots ---------------------------------------------------------------
+means <- nmds_data_binary %>%
   group_by(Protocol) %>%
-  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
-C <- ggplot() +
-  theme_classic() +
-  xy +
-  h_line1 +
-  h_line2 +
-  h_line3 +
-  v_line1 +
-  stat_ellipse(
-    data = pca_data_metadata_supplemented,
-    aes(x = PC1, y = PC2, fill = Protocol), level = 0.95, geom = "polygon", alpha = 0.2, color = "black"
-  ) +
-  geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Protocol), size = 4, shape = 19) +
-  labs(x = "Principal Component 1", y = "Principal Component 2", title = "C") +
+  summarize(mean_NMDS1 = mean(NMDS1), mean_NMDS2 = mean(NMDS2))
+A <- ggplot(nmds_data_binary, aes(x = NMDS1, y = NMDS2, color = Protocol)) +
+  stat_ellipse(aes(fill = Protocol), geom = "polygon", alpha = 0.2, color = "black") +
+  geom_point(data = means, aes(x = mean_NMDS1, y = mean_NMDS2, color = Protocol), size = 4, shape = 19) +
+  theme_pubclean() +
   scale_fill_manual(values = palette) +
-  scale_color_manual(values = palette) +
-  scale_x_continuous(breaks = seq(-2, 2, by = 0.5)) +
-  scale_y_continuous(breaks = seq(-2, 2, by = 0.5)) +
-  coord_cartesian(xlim = c(-2, 2))
-```
-
-And Collector is spread across as well, with collectors varying mostly for PC1. 
-
-
-```{r pca7_benthicpim, fig.height=13, fig.width=12}
-# Calculate means for each Collector
-means <- pca_data_metadata_supplemented %>%
-  group_by(Collector) %>%
-  summarize(mean_PC1 = mean(PC1), mean_PC2 = mean(PC2))
-
-D <- ggplot() +
-  theme_classic() +
-  xy +
-  h_line1 +
-  h_line2 +
-  h_line3 +
-  v_line1 +
-  stat_ellipse(
-    data = pca_data_metadata_supplemented,
-    aes(x = PC1, y = PC2, fill = Collector), level = 0.95, geom = "polygon", alpha = 0.2, color = "black"
-  ) +
-  geom_point(data = means, aes(x = mean_PC1, y = mean_PC2, color = Collector), size = 4, shape = 19) +
-  labs(x = "Principal Component 1", y = "Principal Component 2", title = "D") +
-  scale_fill_manual(values = palette) +
-  scale_color_manual(values = palette) +
-  scale_x_continuous(breaks = seq(-2, 2, by = 0.5)) +
-  scale_y_continuous(breaks = seq(-2, 2, by = 0.5)) +
-  coord_cartesian(xlim = c(-2, 2))
-
-PCA_Plot <- ggarrange(A, B, C, D, ncol = 2, nrow = 2)
-
-# ggsave("fig6_fishpca.png", plot = PCA_Plot, width = 12, height = 13, units = "in", dpi = 800)
-PCA_Plot
+  scale_color_manual(values = palette)
+means2 <- nmds_data_binary %>%
+  group_by(Collector, Protocol) %>%
+  summarize(mean_NMDS1 = mean(NMDS1), mean_NMDS2 = mean(NMDS2))
+B <- ggplot(nmds_data_binary, aes(x = NMDS1, y = NMDS2, color = Collector)) +
+  stat_ellipse(aes(fill = Collector), geom = "polygon", alpha = 0.2, color = "black") +
+  geom_point(data = means2, aes(x = mean_NMDS1, y = mean_NMDS2, color = Collector), size = 4, shape = 19) +
+  theme_pubclean() +
+  facet_wrap(~Protocol) +
+  scale_fill_manual(values = palette[-(1:2)]) +
+  scale_color_manual(values = palette[-(1:2)])
+fig_biplot_fish_binary <- ggarrange(A, B, nrow = 2)
+fig_biplot_fish_binary
+ggsave("fig_biplot_fish_binary.png", fig_biplot_fish_binary, width = 8, height = 10, dpi = 300)
 ```
 
 
-
-
-
-Let's do a Kruskal-Wallis to investigate further. These garner significant p-values.
-
-
-```{r kruskal1_benthicpim, fig.height=4, fig.width=10}
-kw_test_pc1_collector <- kruskal.test(PC1 ~ Collector, data = pca_data_metadata_supplemented)
-kw_test_pc2_collector <- kruskal.test(PC2 ~ Collector, data = pca_data_metadata_supplemented)
-
-
-
-bind_rows(
-  data.frame(Test = "PC1 Collector", p.value = kw_test_pc1_collector$p.value),
-  data.frame(Test = "PC2 Collector", p.value = kw_test_pc2_collector$p.value),
-) %>%
-  mutate(p.value = sprintf("%.2e", p.value))
-```
-
-Running a post-hoc Dunn helps us understand specific Collector pairs that differ. Let’s display all Collector pairs that differ significantly. We can show whether these Collectors are from within the same Protocols, or from different Protocols.
-
-
-```{r dunn1_benthicpim, fig.height=4, fig.width=10, include=FALSE}
-dunn <- dunn.test(pca_data_metadata_supplemented$PC1,
-  g = pca_data_metadata_supplemented$Collector,
-  method = "bonferroni"
-)
-
-dunn2 <- dunn.test(pca_data_metadata_supplemented$PC2,
-  g = pca_data_metadata_supplemented$Collector,
-  method = "bonferroni"
-)
-```
-
-```{r dunn2_benthicpim, eval=FALSE, fig.height=4, fig.width=10}
-dunn <- dunn.test(pca_data_metadata_supplemented$PC1,
-  g = pca_data_metadata_supplemented$Collector,
-  method = "bonferroni"
-)
-
-dunn2 <- dunn.test(pca_data_metadata_supplemented$PC2,
-  g = pca_data_metadata_supplemented$Collector,
-  method = "bonferroni"
-)
-```
-
-The 5 largest absolute Z values with significant P values are created from collector pairs GAGA-JASA, JASA-ROGO, GAGA-VIAL, GAGA-IVWA, JASA-MOBA. However, there are 15 total significant collector pairs. 
-
-```{r dunn3_benthicpim,  fig.height=4, fig.width=10}
-dunn <- data.frame(dunn$comparisons, dunn$Z, dunn$P.adjusted)
-dunn2 <- data.frame(dunn2$comparisons, dunn2$Z, dunn2$P.adjusted)
-
-dunn_df <- filter(dunn, `dunn.P.adjusted` < 0.05) %>%
-  mutate(
-    "P Value" = sprintf("%.2e", (`dunn.P.adjusted`)),
-    "Pairs" = `dunn.comparisons`,
-    "Z Value (PC1)" = abs(`dunn.Z`)
-  ) %>%
-  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
-  select(Collector_1, Collector_2, `Z Value (PC1)`, `P Value`) %>%
-  arrange(desc(`Z Value (PC1)`))
-head(dunn_df, 5)
-```
-
-For PC2, the 5 largest absolute Z values with significant P values are created from collector pairs JASA-MOBA, JASA-VIAL, KENO-MOBA, KENO-VIAL, and MOBA-ROGO. However, there are 13 total significantly different collector pairs. 
-
-
-
-```{r dunn4_benthicpim,  fig.height=4, fig.width=10}
-dunn_df2 <- filter(dunn2, `dunn2.P.adjusted` < 0.05) %>%
-  mutate(
-    "P Value" = sprintf("%.2e", (`dunn2.P.adjusted`)),
-    "Pairs" = `dunn2.comparisons`,
-    "Z Value (PC2)" = abs(`dunn2.Z`)
-  ) %>%
-  separate(Pairs, into = c("Collector_1", "Collector_2"), sep = "-") %>%
-  select(Collector_1, Collector_2, `Z Value (PC2)`, `P Value`) %>%
-  arrange(desc(`Z Value (PC2)`))
-head(dunn_df2, 5)
-```
 
