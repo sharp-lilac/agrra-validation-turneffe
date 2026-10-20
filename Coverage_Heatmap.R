@@ -1,5 +1,6 @@
-library(tidyverse) # work with data
-library(ggpubr) # ggarrange, theme_pubclean
+# Attach packages -----------------------------------------------
+library(tidyverse)
+library(ggpubr)
 
 # Define theme -----------------------------------------------
 palette <- c(
